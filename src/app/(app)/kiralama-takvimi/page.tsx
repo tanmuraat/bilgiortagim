@@ -1,0 +1,673 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, differenceInDays, addMonths, subMonths } from 'date-fns'
+import { tr } from 'date-fns/locale'
+import { ChevronLeft, ChevronRight, Plus, X, Upload, Eye, Car, Clock, TrendingUp, AlertCircle, List, Calendar, Search, Download } from 'lucide-react'
+import { hashTC } from '@/lib/crypto'
+
+const VEHICLE_COLORS = ['#E02424','#3B82F6','#22C55E','#F59E0B','#A855F7','#EC4899','#14B8A6','#F97316','#6366F1','#84CC16']
+
+function maskTC(tc: string) {
+  if (!tc || tc.length < 11) return '***'
+  return tc.slice(0, 3) + '****' + tc.slice(7)
+}
+function maskPhone(phone: string) {
+  if (!phone) return '***'
+  const clean = phone.replace(/\D/g, '')
+  return clean.length >= 10 ? clean.slice(0, 3) + ' *** ** ' + clean.slice(-2) : '***'
+}
+
+export default function KiralamaTakvimiPage() {
+  const supabase = createClient()
+  const [view, setView] = useState<'calendar' | 'list'>('calendar')
+  const [currentMonth, setCurrentMonth] = useState(new Date())
+  const [rentals, setRentals] = useState<any[]>([])
+  const [allRentals, setAllRentals] = useState<any[]>([])
+  const [vehicles, setVehicles] = useState<any[]>([])
+  const [availableVehicles, setAvailableVehicles] = useState<any[]>([])
+  const [profile, setProfile] = useState<any>(null)
+  const [stats, setStats] = useState({ active: 0, monthlyIncome: 0, pending: 0, avgDays: 0 })
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [selectedRental, setSelectedRental] = useState<any>(null)
+  const [showDetailModal, setShowDetailModal] = useState(false)
+  const [showReturnModal, setShowReturnModal] = useState(false)
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const [returnKm, setReturnKm] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [savingPayment, setSavingPayment] = useState(false)
+  const [contractFile, setContractFile] = useState<File | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [paymentForm, setPaymentForm] = useState({ amount: '', method: 'nakit' })
+  const [form, setForm] = useState({
+    vehicle_id: '', customer_name: '', customer_tc: '', customer_phone: '',
+    start_date: '', end_date: '', pickup_km: '', daily_price: '',
+    deposit: '', payment_status: 'pending', payment_method: 'nakit',
+    paid_amount: '', notes: ''
+  })
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const start = format(startOfMonth(currentMonth), 'yyyy-MM-dd')
+    const end = format(endOfMonth(currentMonth), 'yyyy-MM-dd')
+
+    const [profileRes, allRentalsRes, vehiclesRes] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', user.id).single(),
+      supabase.from('rentals').select('*, vehicles(plate, brand, model, color)').eq('user_id', user.id).order('start_date', { ascending: false }),
+      supabase.from('vehicles').select('*').eq('user_id', user.id),
+    ])
+
+    const allRentalsData = allRentalsRes.data || []
+    const vehiclesData = vehiclesRes.data || []
+    setProfile(profileRes.data)
+    setAllRentals(allRentalsData)
+    setVehicles(vehiclesData)
+    setAvailableVehicles(vehiclesData.filter((v: any) => v.status === 'available'))
+
+    const calendarRentals = allRentalsData.filter(r => r.start_date <= end && r.end_date >= start)
+    setRentals(calendarRentals)
+
+    const active = allRentalsData.filter(r => r.status === 'active').length
+    const monthlyIncome = allRentalsData
+      .filter(r => r.start_date >= start && r.start_date <= end && r.payment_status !== 'pending')
+      .reduce((s: number, r: any) => s + (Number(r.paid_amount) || 0), 0)
+    const pending = allRentalsData
+      .filter(r => r.payment_status === 'pending' || r.payment_status === 'partial')
+      .reduce((s: number, r: any) => s + ((Number(r.total_price) || 0) - (Number(r.paid_amount) || 0)), 0)
+    const completed = allRentalsData.filter(r => r.status === 'completed')
+    const avgDays = completed.length > 0
+      ? Math.round(completed.reduce((s: number, r: any) => s + differenceInDays(new Date(r.end_date), new Date(r.start_date)), 0) / completed.length)
+      : 0
+    setStats({ active, monthlyIncome, pending, avgDays })
+    setLoading(false)
+  }, [currentMonth, supabase])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  const totalPrice = form.start_date && form.end_date && form.daily_price
+    ? differenceInDays(new Date(form.end_date), new Date(form.start_date)) * Number(form.daily_price)
+    : 0
+
+  const handleSubmit = async () => {
+    if (!form.vehicle_id || !form.customer_name || !form.start_date || !form.end_date || !form.daily_price) {
+      alert('Lütfen zorunlu alanları doldurun.'); return
+    }
+    setSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    let contract_url = null
+    if (contractFile) {
+      const ext = contractFile.name.split('.').pop()
+      const path = `${user.id}/${Date.now()}.${ext}`
+      const { data: uploadData } = await supabase.storage.from('contracts').upload(path, contractFile)
+      if (uploadData) {
+        const { data: urlData } = supabase.storage.from('contracts').getPublicUrl(path)
+        contract_url = urlData?.publicUrl
+      }
+    }
+
+    let tc_hash = null
+    if (form.customer_tc && form.customer_tc.length === 11) {
+      tc_hash = hashTC(form.customer_tc)
+      const { data: existingCustomer } = await supabase.from('customer_records').select('*').eq('tc_hash', tc_hash).single()
+      if (existingCustomer) {
+        await supabase.from('customer_records').update({
+          rental_count: (existingCustomer.rental_count || 0) + 1,
+          last_rental_company: profile?.company_name,
+          last_rental_date: form.start_date,
+          last_queried_at: new Date().toISOString(),
+        }).eq('tc_hash', tc_hash)
+      }
+    }
+
+    const paidAmount = form.paid_amount ? Number(form.paid_amount) : (form.payment_status === 'paid' ? totalPrice : 0)
+
+    const { error } = await supabase.from('rentals').insert({
+      user_id: user.id, vehicle_id: form.vehicle_id,
+      customer_name: form.customer_name, customer_tc_hash: tc_hash,
+      customer_phone_encrypted: form.customer_phone,
+      start_date: form.start_date, end_date: form.end_date,
+      pickup_km: form.pickup_km ? Number(form.pickup_km) : null,
+      daily_price: Number(form.daily_price), total_price: totalPrice,
+      deposit: form.deposit ? Number(form.deposit) : 0,
+      payment_status: form.payment_status, payment_method: form.payment_method,
+      paid_amount: paidAmount, notes: form.notes, contract_url, status: 'active'
+    })
+
+    if (!error) {
+      await supabase.from('vehicles').update({ status: 'rented' }).eq('id', form.vehicle_id)
+      setShowAddModal(false)
+      setForm({ vehicle_id: '', customer_name: '', customer_tc: '', customer_phone: '', start_date: '', end_date: '', pickup_km: '', daily_price: '', deposit: '', payment_status: 'pending', payment_method: 'nakit', paid_amount: '', notes: '' })
+      setContractFile(null)
+      fetchData()
+    } else {
+      alert('Hata: ' + error.message)
+    }
+    setSaving(false)
+  }
+
+  const handleReturn = async () => {
+    if (!returnKm || !selectedRental) return
+    setSaving(true)
+    const km = Number(returnKm)
+    await supabase.from('rentals').update({ return_km: km, status: 'completed' }).eq('id', selectedRental.id)
+    await supabase.from('vehicles').update({ status: 'available', current_km: km }).eq('id', selectedRental.vehicle_id)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) {
+      await supabase.from('vehicle_km_logs').insert({
+        vehicle_id: selectedRental.vehicle_id, user_id: user.id,
+        km_value: km, km_difference: km - (selectedRental.pickup_km || 0),
+        logged_date: format(new Date(), 'yyyy-MM-dd'),
+        note: `${selectedRental.customer_name} kiralama iadesi`
+      })
+    }
+    setShowReturnModal(false)
+    setShowDetailModal(false)
+    setReturnKm('')
+    fetchData()
+    setSaving(false)
+  }
+
+  const handlePayment = async () => {
+    if (!paymentForm.amount || !selectedRental) return
+    setSavingPayment(true)
+    const newPaid = Number(selectedRental.paid_amount || 0) + Number(paymentForm.amount)
+    const total = Number(selectedRental.total_price || 0)
+    const newStatus = newPaid >= total ? 'paid' : newPaid > 0 ? 'partial' : 'pending'
+
+    await supabase.from('rentals').update({
+      paid_amount: newPaid,
+      payment_status: newStatus,
+      payment_method: paymentForm.method,
+    }).eq('id', selectedRental.id)
+
+    // selectedRental'ı güncelle ki detay modal güncel göstersin
+    setSelectedRental((r: any) => ({ ...r, paid_amount: newPaid, payment_status: newStatus, payment_method: paymentForm.method }))
+    setPaymentForm({ amount: '', method: 'nakit' })
+    setShowPaymentModal(false)
+    fetchData()
+    setSavingPayment(false)
+  }
+
+  const days = eachDayOfInterval({ start: startOfMonth(currentMonth), end: endOfMonth(currentMonth) })
+  const firstDayOfWeek = (startOfMonth(currentMonth).getDay() + 6) % 7
+
+  const getRentalsForDay = (day: Date) =>
+    rentals.filter(r => day >= new Date(r.start_date) && day <= new Date(r.end_date))
+
+  const getVehicleColor = (vehicleId: string) => {
+    const idx = vehicles.findIndex(v => v.id === vehicleId)
+    return VEHICLE_COLORS[idx % VEHICLE_COLORS.length]
+  }
+
+  const upcomingReturns = allRentals
+    .filter(r => r.status === 'active' && new Date(r.end_date) >= new Date())
+    .sort((a, b) => new Date(a.end_date).getTime() - new Date(b.end_date).getTime())
+    .slice(0, 6)
+
+  const filteredRentals = allRentals.filter(r => {
+    if (!searchQuery) return true
+    const q = searchQuery.toLowerCase()
+    return r.customer_name?.toLowerCase().includes(q) ||
+      r.vehicles?.plate?.toLowerCase().includes(q) ||
+      r.vehicles?.brand?.toLowerCase().includes(q)
+  })
+
+  const statusBadge = (r: any) => {
+    if (r.status === 'completed') return <span className="text-[10px] bg-green-500/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded-full">Tamamlandı</span>
+    if (r.payment_status === 'pending') return <span className="text-[10px] bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 px-2 py-0.5 rounded-full">Ödeme Bekliyor</span>
+    if (r.payment_status === 'partial') return <span className="text-[10px] bg-orange-500/20 text-orange-400 border border-orange-500/30 px-2 py-0.5 rounded-full">Kısmi Ödeme</span>
+    return <span className="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded-full">Aktif</span>
+  }
+
+  const remainingAmount = selectedRental
+    ? Number(selectedRental.total_price || 0) - Number(selectedRental.paid_amount || 0)
+    : 0
+
+  const inputCls = "w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2.5 text-sm focus:border-red-500 outline-none"
+
+  if (loading) return <div className="flex items-center justify-center h-96"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-500" /></div>
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Kiralama Takvimi</h1>
+          <p className="text-gray-400 text-sm mt-1">Kiralamalarınızı yönetin ve arşivleyin</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex bg-[#1E1E1E] border border-[#2A2A2A] rounded-lg p-1">
+            <button onClick={() => setView('calendar')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors ${view === 'calendar' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+              <Calendar size={14} /> Takvim
+            </button>
+            <button onClick={() => setView('list')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors ${view === 'list' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}>
+              <List size={14} /> Liste / Arşiv
+            </button>
+          </div>
+          <button onClick={() => setShowAddModal(true)} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+            <Plus size={16} /> Kiralama Ekle
+          </button>
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4">
+        {[
+          { label: 'Aktif Kiralamalar', value: stats.active, icon: Car, color: 'text-blue-400', bg: 'bg-blue-400/10' },
+          { label: 'Bu Ay Tahsilat', value: `₺${stats.monthlyIncome.toLocaleString('tr-TR')}`, icon: TrendingUp, color: 'text-green-400', bg: 'bg-green-400/10' },
+          { label: 'Bekleyen Tahsilat', value: `₺${stats.pending.toLocaleString('tr-TR')}`, icon: AlertCircle, color: 'text-yellow-400', bg: 'bg-yellow-400/10' },
+          { label: 'Ort. Kiralama Süresi', value: `${stats.avgDays} gün`, icon: Clock, color: 'text-purple-400', bg: 'bg-purple-400/10' },
+        ].map((s, i) => (
+          <div key={i} className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-gray-400 text-sm">{s.label}</span>
+              <div className={`${s.bg} p-2 rounded-lg`}><s.icon size={16} className={s.color} /></div>
+            </div>
+            <div className="text-2xl font-bold text-white">{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* CALENDAR VIEW */}
+      {view === 'calendar' && (
+        <div className="grid grid-cols-3 gap-6">
+          <div className="col-span-2 bg-[#141414] border border-[#2A2A2A] rounded-xl p-5">
+            <div className="flex items-center justify-between mb-5">
+              <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="p-2 hover:bg-[#2A2A2A] rounded-lg text-gray-400 transition-colors"><ChevronLeft size={18} /></button>
+              <h2 className="text-white font-semibold text-lg">{format(currentMonth, 'MMMM yyyy', { locale: tr })}</h2>
+              <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="p-2 hover:bg-[#2A2A2A] rounded-lg text-gray-400 transition-colors"><ChevronRight size={18} /></button>
+            </div>
+            <div className="grid grid-cols-7 mb-2">
+              {['Pzt','Sal','Çar','Per','Cum','Cmt','Paz'].map(d => (
+                <div key={d} className="text-center text-xs font-medium text-gray-500 py-2">{d}</div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {Array.from({ length: firstDayOfWeek }).map((_, i) => <div key={`e${i}`} />)}
+              {days.map(day => {
+                const dayRentals = getRentalsForDay(day)
+                const isToday = isSameDay(day, new Date())
+                return (
+                  <div key={day.toISOString()} className={`min-h-[72px] p-1 rounded-lg border ${isToday ? 'border-red-500/50 bg-red-500/5' : 'border-transparent hover:border-[#2A2A2A]'}`}>
+                    <div className={`text-xs font-medium mb-1 w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-red-600 text-white' : 'text-gray-400'}`}>
+                      {format(day, 'd')}
+                    </div>
+                    <div className="space-y-0.5">
+                      {dayRentals.slice(0, 2).map(r => (
+                        <div key={r.id} onClick={() => { setSelectedRental(r); setShowDetailModal(true) }}
+                          className="text-[10px] px-1 py-0.5 rounded cursor-pointer truncate font-medium"
+                          style={{ backgroundColor: getVehicleColor(r.vehicle_id) + '33', color: getVehicleColor(r.vehicle_id), border: `1px solid ${getVehicleColor(r.vehicle_id)}44` }}>
+                          {r.vehicles?.plate}
+                        </div>
+                      ))}
+                      {dayRentals.length > 2 && <div className="text-[10px] text-gray-500">+{dayRentals.length - 2}</div>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            {vehicles.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-[#2A2A2A]">
+                {vehicles.map((v, i) => (
+                  <div key={v.id} className="flex items-center gap-1.5">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: VEHICLE_COLORS[i % VEHICLE_COLORS.length] }} />
+                    <span className="text-xs text-gray-400">{v.plate}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-5">
+            <h3 className="text-white font-semibold mb-4">Yaklaşan Teslimler</h3>
+            <div className="space-y-3">
+              {upcomingReturns.length === 0 ? <p className="text-gray-500 text-sm">Yaklaşan teslimat yok</p>
+                : upcomingReturns.map(r => {
+                  const daysLeft = differenceInDays(new Date(r.end_date), new Date())
+                  return (
+                    <div key={r.id} onClick={() => { setSelectedRental(r); setShowDetailModal(true) }}
+                      className="flex items-start gap-3 p-3 bg-[#1E1E1E] rounded-lg cursor-pointer hover:bg-[#252525] transition-colors">
+                      <div className={`text-center min-w-[40px] p-1 rounded-lg ${daysLeft <= 1 ? 'bg-red-500/20' : daysLeft <= 3 ? 'bg-yellow-500/20' : 'bg-blue-500/20'}`}>
+                        <div className={`text-lg font-bold leading-none ${daysLeft <= 1 ? 'text-red-400' : daysLeft <= 3 ? 'text-yellow-400' : 'text-blue-400'}`}>{format(new Date(r.end_date), 'd')}</div>
+                        <div className="text-[10px] text-gray-500">{format(new Date(r.end_date), 'MMM', { locale: tr })}</div>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-white text-sm font-medium truncate">{r.vehicles?.plate}</div>
+                        <div className="text-gray-400 text-xs truncate">{r.customer_name}</div>
+                        <div className={`text-xs mt-1 ${daysLeft <= 1 ? 'text-red-400' : daysLeft <= 3 ? 'text-yellow-400' : 'text-gray-500'}`}>
+                          {daysLeft === 0 ? 'Bugün' : daysLeft < 0 ? `${Math.abs(daysLeft)} gün geçti` : `${daysLeft} gün kaldı`}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LIST VIEW */}
+      {view === 'list' && (
+        <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-[#2A2A2A] flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Müşteri adı, araç plakası veya marka ara..."
+                className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg pl-9 pr-3 py-2 text-sm focus:border-red-500 outline-none" />
+            </div>
+            <span className="text-gray-500 text-sm">{filteredRentals.length} kayıt</span>
+          </div>
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-[#2A2A2A]">
+                {['Araç', 'Müşteri', 'TC', 'Başlangıç', 'Bitiş', 'Toplam', 'Tahsilat', 'Durum', 'Sözleşme', ''].map(h => (
+                  <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filteredRentals.length === 0 ? (
+                <tr><td colSpan={10} className="text-center text-gray-500 text-sm py-12">Kayıt bulunamadı</td></tr>
+              ) : filteredRentals.map(r => (
+                <tr key={r.id} className="border-b border-[#1A1A1A] hover:bg-[#1E1E1E] transition-colors">
+                  <td className="px-4 py-3">
+                    <div className="text-white text-sm font-bold">{r.vehicles?.plate}</div>
+                    <div className="text-gray-500 text-xs">{r.vehicles?.brand} {r.vehicles?.model}</div>
+                  </td>
+                  <td className="px-4 py-3 text-white text-sm">{r.customer_name}</td>
+                  <td className="px-4 py-3 text-gray-400 text-xs font-mono">{r.customer_tc_hash ? maskTC('12345678901') : '—'}</td>
+                  <td className="px-4 py-3 text-gray-400 text-sm">{format(new Date(r.start_date), 'dd.MM.yyyy')}</td>
+                  <td className="px-4 py-3 text-gray-400 text-sm">{format(new Date(r.end_date), 'dd.MM.yyyy')}</td>
+                  <td className="px-4 py-3">
+                    <div className="text-white text-sm font-medium">₺{Number(r.total_price || 0).toLocaleString('tr-TR')}</div>
+                    <div className="text-gray-500 text-xs">₺{Number(r.daily_price || 0).toLocaleString('tr-TR')}/gün</div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className={`text-sm font-medium ${r.payment_status === 'paid' ? 'text-green-400' : r.payment_status === 'partial' ? 'text-yellow-400' : 'text-red-400'}`}>
+                      ₺{Number(r.paid_amount || 0).toLocaleString('tr-TR')}
+                    </div>
+                    {r.payment_status !== 'paid' && (
+                      <div className="text-gray-600 text-xs">Kalan: ₺{(Number(r.total_price || 0) - Number(r.paid_amount || 0)).toLocaleString('tr-TR')}</div>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">{statusBadge(r)}</td>
+                  <td className="px-4 py-3">
+                    {r.contract_url ? (
+                      <div className="flex items-center gap-1.5">
+                        <a href={r.contract_url} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-blue-400 hover:text-blue-300 text-xs"><Eye size={11} /> Gör</a>
+                        <a href={r.contract_url} download
+                          className="flex items-center gap-1 text-gray-400 hover:text-white text-xs"><Download size={11} /> İndir</a>
+                      </div>
+                    ) : <span className="text-gray-600 text-xs">Yok</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    <button onClick={() => { setSelectedRental(r); setShowDetailModal(true) }}
+                      className="text-xs bg-[#2A2A2A] text-gray-400 hover:text-white px-2 py-1 rounded-lg transition-colors">Detay</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Add Modal */}
+      {showAddModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-[#2A2A2A]">
+              <h2 className="text-white font-semibold text-lg">Kiralama Ekle</h2>
+              <button onClick={() => setShowAddModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="text-gray-400 text-sm mb-1.5 block">Araç Seç *</label>
+                <select value={form.vehicle_id} onChange={e => setForm(f => ({ ...f, vehicle_id: e.target.value }))} className={inputCls}>
+                  <option value="">Araç seçin</option>
+                  {availableVehicles.map(v => <option key={v.id} value={v.id}>{v.plate} — {v.brand} {v.model}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Müşteri Adı Soyadı *</label>
+                  <input value={form.customer_name} onChange={e => setForm(f => ({ ...f, customer_name: e.target.value }))} placeholder="Ad Soyad" className={inputCls} /></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">TC Kimlik No</label>
+                  <input value={form.customer_tc} onChange={e => setForm(f => ({ ...f, customer_tc: e.target.value.replace(/\D/g,'').slice(0,11) }))} placeholder="11 haneli TC" maxLength={11} className={inputCls} /></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Telefon</label>
+                  <input value={form.customer_phone} onChange={e => setForm(f => ({ ...f, customer_phone: e.target.value }))} placeholder="+90 5XX XXX XX XX" className={inputCls} /></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Teslim KM</label>
+                  <input type="number" value={form.pickup_km} onChange={e => setForm(f => ({ ...f, pickup_km: e.target.value }))} placeholder="Araç teslim km" className={inputCls} /></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Başlangıç Tarihi *</label>
+                  <input type="date" value={form.start_date} onChange={e => setForm(f => ({ ...f, start_date: e.target.value }))} className={inputCls} /></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Bitiş Tarihi *</label>
+                  <input type="date" value={form.end_date} onChange={e => setForm(f => ({ ...f, end_date: e.target.value }))} className={inputCls} /></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Günlük Fiyat (₺) *</label>
+                  <input type="number" value={form.daily_price} onChange={e => setForm(f => ({ ...f, daily_price: e.target.value }))} placeholder="0" className={inputCls} />
+                  {totalPrice > 0 && <p className="text-green-400 text-xs mt-1">Toplam: ₺{totalPrice.toLocaleString('tr-TR')}</p>}</div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Depozito (₺)</label>
+                  <input type="number" value={form.deposit} onChange={e => setForm(f => ({ ...f, deposit: e.target.value }))} placeholder="0" className={inputCls} /></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Ödeme Durumu</label>
+                  <select value={form.payment_status} onChange={e => setForm(f => ({ ...f, payment_status: e.target.value }))} className={inputCls}>
+                    <option value="pending">Bekliyor</option>
+                    <option value="paid">Ödendi</option>
+                    <option value="partial">Kısmi Ödeme</option>
+                  </select></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Tahsil Edilen (₺)</label>
+                  <input type="number" value={form.paid_amount} onChange={e => setForm(f => ({ ...f, paid_amount: e.target.value }))} placeholder="0" className={inputCls} /></div>
+                <div><label className="text-gray-400 text-sm mb-1.5 block">Ödeme Yöntemi</label>
+                  <select value={form.payment_method} onChange={e => setForm(f => ({ ...f, payment_method: e.target.value }))} className={inputCls}>
+                    <option value="nakit">Nakit</option>
+                    <option value="kredi_karti">Kredi Kartı</option>
+                    <option value="havale">Havale / EFT</option>
+                  </select></div>
+              </div>
+              <div><label className="text-gray-400 text-sm mb-1.5 block">Kira Sözleşmesi (PDF/Görsel, max 20MB)</label>
+                <label className="flex items-center gap-3 w-full bg-[#1E1E1E] border border-dashed border-[#3A3A3A] text-gray-400 rounded-lg px-4 py-3 cursor-pointer hover:border-red-500/50 transition-colors">
+                  <Upload size={16} />
+                  <span className="text-sm">{contractFile ? contractFile.name : 'Dosya seç veya sürükle'}</span>
+                  <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={e => { if (e.target.files?.[0]) setContractFile(e.target.files[0]) }} />
+                </label></div>
+              <div><label className="text-gray-400 text-sm mb-1.5 block">Notlar</label>
+                <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} rows={2} placeholder="Ek notlar..."
+                  className={inputCls + ' resize-none'} /></div>
+            </div>
+            <div className="flex gap-3 p-5 border-t border-[#2A2A2A]">
+              <button onClick={() => setShowAddModal(false)} className="flex-1 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 py-2.5 rounded-lg hover:bg-[#252525] transition-colors">İptal</button>
+              <button onClick={handleSubmit} disabled={saving} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">
+                {saving ? 'Kaydediliyor...' : 'Kaydet'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail Modal */}
+      {showDetailModal && selectedRental && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between p-5 border-b border-[#2A2A2A]">
+              <h2 className="text-white font-semibold text-lg">Kiralama Detayı</h2>
+              <button onClick={() => setShowDetailModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              {/* Ödeme özeti banner */}
+              <div className={`rounded-xl p-4 flex items-center justify-between ${selectedRental.payment_status === 'paid' ? 'bg-green-500/10 border border-green-500/20' : selectedRental.payment_status === 'partial' ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
+                <div>
+                  <div className="text-xs text-gray-400 mb-0.5">Ödeme Durumu</div>
+                  <div className={`font-bold text-lg ${selectedRental.payment_status === 'paid' ? 'text-green-400' : selectedRental.payment_status === 'partial' ? 'text-yellow-400' : 'text-red-400'}`}>
+                    {selectedRental.payment_status === 'paid' ? '✅ Tam Ödendi' : selectedRental.payment_status === 'partial' ? '🟡 Kısmi Ödeme' : '⏳ Ödeme Bekliyor'}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-gray-400">Tahsil / Toplam</div>
+                  <div className="text-white font-bold">
+                    ₺{Number(selectedRental.paid_amount || 0).toLocaleString('tr-TR')} / ₺{Number(selectedRental.total_price || 0).toLocaleString('tr-TR')}
+                  </div>
+                  {selectedRental.payment_status !== 'paid' && (
+                    <div className="text-red-400 text-xs">Kalan: ₺{remainingAmount.toLocaleString('tr-TR')}</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Araç', value: `${selectedRental.vehicles?.plate} — ${selectedRental.vehicles?.brand} ${selectedRental.vehicles?.model}` },
+                  { label: 'Müşteri', value: selectedRental.customer_name },
+                  { label: 'TC Kimlik', value: selectedRental.customer_tc_hash ? maskTC('12345678901') : '—' },
+                  { label: 'Telefon', value: selectedRental.customer_phone_encrypted ? maskPhone(selectedRental.customer_phone_encrypted) : '—' },
+                  { label: 'Başlangıç', value: format(new Date(selectedRental.start_date), 'dd.MM.yyyy') },
+                  { label: 'Bitiş', value: format(new Date(selectedRental.end_date), 'dd.MM.yyyy') },
+                  { label: 'Teslim KM', value: selectedRental.pickup_km ? `${selectedRental.pickup_km.toLocaleString()} km` : '—' },
+                  { label: 'İade KM', value: selectedRental.return_km ? `${selectedRental.return_km.toLocaleString()} km` : '—' },
+                  { label: 'Günlük Fiyat', value: `₺${Number(selectedRental.daily_price || 0).toLocaleString('tr-TR')}` },
+                  { label: 'Depozito', value: `₺${Number(selectedRental.deposit || 0).toLocaleString('tr-TR')}` },
+                  { label: 'Ödeme Yöntemi', value: selectedRental.payment_method || '—' },
+                  { label: 'Kiralama Süresi', value: `${differenceInDays(new Date(selectedRental.end_date), new Date(selectedRental.start_date))} gün` },
+                ].map((item, i) => (
+                  <div key={i} className="bg-[#1E1E1E] rounded-lg p-3">
+                    <div className="text-gray-500 text-xs mb-1">{item.label}</div>
+                    <div className="text-white text-sm font-medium">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              {selectedRental.notes && (
+                <div className="bg-[#1E1E1E] rounded-lg p-3">
+                  <div className="text-gray-500 text-xs mb-1">Notlar</div>
+                  <div className="text-white text-sm">{selectedRental.notes}</div>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2 p-5 border-t border-[#2A2A2A]">
+              {selectedRental.contract_url && (
+                <div className="flex gap-2">
+                  <a href={selectedRental.contract_url} target="_blank" rel="noopener noreferrer"
+                    className="flex items-center gap-2 bg-blue-600/20 border border-blue-600/30 text-blue-400 px-3 py-2 rounded-lg text-sm hover:bg-blue-600/30 transition-colors">
+                    <Eye size={14} /> Görüntüle
+                  </a>
+                  <a href={selectedRental.contract_url} download
+                    className="flex items-center gap-2 bg-blue-600/10 border border-blue-600/20 text-blue-300 px-3 py-2 rounded-lg text-sm hover:bg-blue-600/20 transition-colors">
+                    <Download size={14} /> İndir
+                  </a>
+                </div>
+              )}
+              {selectedRental.status === 'active' && (
+                <button onClick={() => setShowReturnModal(true)}
+                  className="flex items-center gap-2 bg-green-600/20 border border-green-600/30 text-green-400 px-3 py-2 rounded-lg text-sm hover:bg-green-600/30 transition-colors">
+                  <Car size={14} /> Araç Teslim Alındı
+                </button>
+              )}
+              {selectedRental.payment_status !== 'paid' && (
+                <button onClick={() => { setPaymentForm({ amount: '', method: selectedRental.payment_method || 'nakit' }); setShowPaymentModal(true) }}
+                  className="flex items-center gap-2 bg-yellow-600/20 border border-yellow-600/30 text-yellow-400 px-3 py-2 rounded-lg text-sm hover:bg-yellow-600/30 transition-colors">
+                  💰 Ödeme Al
+                </button>
+              )}
+              <button onClick={() => setShowDetailModal(false)}
+                className="flex items-center gap-2 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 px-3 py-2 rounded-lg text-sm hover:bg-[#252525] transition-colors ml-auto">
+                Kapat
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Return KM Modal */}
+      {showReturnModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4">
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl w-full max-w-sm p-6">
+            <h3 className="text-white font-semibold text-lg mb-4">Araç İade KM</h3>
+            <p className="text-gray-400 text-sm mb-4">Teslim KM: <span className="text-white font-medium">{selectedRental?.pickup_km?.toLocaleString() || '—'}</span></p>
+            <label className="text-gray-400 text-sm mb-1.5 block">İade KM *</label>
+            <input type="number" value={returnKm} onChange={e => setReturnKm(e.target.value)} placeholder="Örn: 45250" className={inputCls + ' mb-2'} />
+            {returnKm && selectedRental?.pickup_km && (
+              <p className="text-blue-400 text-xs mb-4">Kullanılan: {(Number(returnKm) - selectedRental.pickup_km).toLocaleString()} km</p>
+            )}
+            <div className="flex gap-3">
+              <button onClick={() => setShowReturnModal(false)} className="flex-1 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 py-2.5 rounded-lg hover:bg-[#252525] transition-colors">İptal</button>
+              <button onClick={handleReturn} disabled={saving} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">
+                {saving ? 'Kaydediliyor...' : 'Onayla'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Modal */}
+      {showPaymentModal && selectedRental && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] p-4">
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl w-full max-w-sm p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-white font-semibold text-lg">Ödeme Al</h3>
+              <button onClick={() => setShowPaymentModal(false)} className="text-gray-400 hover:text-white"><X size={18} /></button>
+            </div>
+
+            {/* Özet */}
+            <div className="grid grid-cols-3 gap-2 mb-5">
+              <div className="bg-[#1E1E1E] rounded-lg p-3 text-center">
+                <div className="text-gray-500 text-[10px] mb-1">Toplam</div>
+                <div className="text-white font-bold text-sm">₺{Number(selectedRental.total_price || 0).toLocaleString('tr-TR')}</div>
+              </div>
+              <div className="bg-[#1E1E1E] rounded-lg p-3 text-center">
+                <div className="text-gray-500 text-[10px] mb-1">Tahsil Edilen</div>
+                <div className="text-green-400 font-bold text-sm">₺{Number(selectedRental.paid_amount || 0).toLocaleString('tr-TR')}</div>
+              </div>
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 text-center">
+                <div className="text-gray-500 text-[10px] mb-1">Kalan</div>
+                <div className="text-yellow-400 font-bold text-sm">₺{remainingAmount.toLocaleString('tr-TR')}</div>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="text-gray-400 text-sm mb-1.5 block">Alınan Tutar (₺) *</label>
+                <input type="number" value={paymentForm.amount}
+                  onChange={e => setPaymentForm(f => ({ ...f, amount: e.target.value }))}
+                  placeholder="0" className={inputCls} />
+                <button onClick={() => setPaymentForm(f => ({ ...f, amount: String(remainingAmount) }))}
+                  className="text-xs text-red-400 hover:text-red-300 mt-1.5 transition-colors">
+                  Tamamını gir (₺{remainingAmount.toLocaleString('tr-TR')})
+                </button>
+              </div>
+              <div>
+                <label className="text-gray-400 text-sm mb-1.5 block">Ödeme Yöntemi</label>
+                <select value={paymentForm.method} onChange={e => setPaymentForm(f => ({ ...f, method: e.target.value }))} className={inputCls}>
+                  <option value="nakit">Nakit</option>
+                  <option value="kredi_karti">Kredi Kartı</option>
+                  <option value="havale">Havale / EFT</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Önizleme */}
+            {paymentForm.amount && Number(paymentForm.amount) > 0 && (
+              <div className="bg-[#1E1E1E] rounded-lg p-3 mb-4">
+                <div className="text-gray-500 text-xs mb-1">Bu ödeme sonrası durum</div>
+                <div className={`text-sm font-semibold ${(Number(selectedRental.paid_amount || 0) + Number(paymentForm.amount)) >= Number(selectedRental.total_price || 0) ? 'text-green-400' : 'text-yellow-400'}`}>
+                  {(Number(selectedRental.paid_amount || 0) + Number(paymentForm.amount)) >= Number(selectedRental.total_price || 0)
+                    ? '✅ Tam Ödendi'
+                    : `🟡 Kısmi — Kalan: ₺${(remainingAmount - Number(paymentForm.amount)).toLocaleString('tr-TR')}`}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowPaymentModal(false)} className="flex-1 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 py-2.5 rounded-lg hover:bg-[#252525] transition-colors">İptal</button>
+              <button onClick={handlePayment} disabled={savingPayment || !paymentForm.amount || Number(paymentForm.amount) <= 0}
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">
+                {savingPayment ? 'Kaydediliyor...' : 'Ödemeyi Kaydet'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
