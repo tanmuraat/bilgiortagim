@@ -2,14 +2,15 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Globe, Plus, Trash2, Save, ChevronDown, ChevronUp } from 'lucide-react'
+import { Globe, Plus, Trash2, Save, ChevronDown, ChevronUp, Phone, Mail, MapPin, Clock } from 'lucide-react'
 
 export default function SiteYonetimiPage() {
   const supabase = createClient()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
-  const [openSection, setOpenSection] = useState<string | null>('hero')
+  const [openSection, setOpenSection] = useState<string | null>('contact')
 
+  const [contact, setContact] = useState({ phone: '', email: '', address: '', support_hours: '' })
   const [hero, setHero] = useState<any>({})
   const [stats, setStats] = useState<any[]>([])
   const [features, setFeatures] = useState<any[]>([])
@@ -21,16 +22,21 @@ export default function SiteYonetimiPage() {
     const { data } = await supabase.from('landing_content').select('*').order('display_order')
     if (!data) { setLoading(false); return }
 
-    const heroRow = data.find(r => r.section === 'hero' && r.key === 'main')
-    if (heroRow) setHero(heroRow.value)
+    const get = (section: string, key: string) => data.find(r => r.section === section && r.key === key)?.value
+
+    const contactData = get('contact', 'info')
+    if (contactData) setContact(contactData)
+
+    const heroRow = get('hero', 'main')
+    if (heroRow) setHero(heroRow)
 
     setStats(data.filter(r => r.section === 'stats').map(r => ({ key: r.key, ...r.value })))
     setFeatures(data.filter(r => r.section === 'features').map(r => ({ key: r.key, ...r.value })))
     setUpcoming(data.filter(r => r.section === 'upcoming').map(r => ({ key: r.key, ...r.value })))
 
-    const proRow = data.find(r => r.section === 'pricing' && r.key === 'pro')
-    const premiumRow = data.find(r => r.section === 'pricing' && r.key === 'premium')
-    setPricing({ pro: proRow?.value || {}, premium: premiumRow?.value || {} })
+    const proRow = get('pricing', 'pro')
+    const premiumRow = get('pricing', 'premium')
+    setPricing({ pro: proRow || {}, premium: premiumRow || {} })
 
     setLoading(false)
   }, [supabase])
@@ -38,18 +44,25 @@ export default function SiteYonetimiPage() {
   useEffect(() => { fetchData() }, [fetchData])
 
   const saveSection = async (section: string, key: string, value: any) => {
-    setSaving(section)
-    await supabase.from('landing_content').upsert({ section, key, value, updated_at: new Date().toISOString() }, { onConflict: 'section,key' })
+    setSaving(section + key)
+    await supabase.from('landing_content').upsert(
+      { section, key, value, updated_at: new Date().toISOString() },
+      { onConflict: 'section,key' }
+    )
     setSaving(null)
   }
 
+  const saveContact = () => saveSection('contact', 'info', contact)
   const saveHero = () => saveSection('hero', 'main', hero)
   const savePricing = (plan: string) => saveSection('pricing', plan, pricing[plan])
 
   const saveStats = async () => {
     setSaving('stats')
     for (const s of stats) {
-      await supabase.from('landing_content').upsert({ section: 'stats', key: s.key, value: { value: s.value, label: s.label }, updated_at: new Date().toISOString() }, { onConflict: 'section,key' })
+      await supabase.from('landing_content').upsert(
+        { section: 'stats', key: s.key, value: { value: s.value, label: s.label }, updated_at: new Date().toISOString() },
+        { onConflict: 'section,key' }
+      )
     }
     setSaving(null)
   }
@@ -57,7 +70,10 @@ export default function SiteYonetimiPage() {
   const saveFeatures = async () => {
     setSaving('features')
     for (const f of features) {
-      await supabase.from('landing_content').upsert({ section: 'features', key: f.key, value: { icon: f.icon, title: f.title, description: f.description, available_in: f.available_in }, updated_at: new Date().toISOString() }, { onConflict: 'section,key' })
+      await supabase.from('landing_content').upsert(
+        { section: 'features', key: f.key, value: { icon: f.icon, title: f.title, description: f.description, available_in: f.available_in }, updated_at: new Date().toISOString() },
+        { onConflict: 'section,key' }
+      )
     }
     setSaving(null)
   }
@@ -65,7 +81,10 @@ export default function SiteYonetimiPage() {
   const saveUpcoming = async () => {
     setSaving('upcoming')
     for (const u of upcoming) {
-      await supabase.from('landing_content').upsert({ section: 'upcoming', key: u.key, value: { title: u.title, description: u.description, estimated: u.estimated }, updated_at: new Date().toISOString() }, { onConflict: 'section,key' })
+      await supabase.from('landing_content').upsert(
+        { section: 'upcoming', key: u.key, value: { title: u.title, description: u.description, estimated: u.estimated }, updated_at: new Date().toISOString() },
+        { onConflict: 'section,key' }
+      )
     }
     setSaving(null)
   }
@@ -75,7 +94,7 @@ export default function SiteYonetimiPage() {
   const removeFeature = (key: string) => setFeatures(f => f.filter(x => x.key !== key))
   const removeUpcoming = (key: string) => setUpcoming(u => u.filter(x => x.key !== key))
 
-  const SectionHeader = ({ id, label }: { id: string, label: string }) => (
+  const SectionHeader = ({ id, label }: { id: string; label: string }) => (
     <button onClick={() => setOpenSection(openSection === id ? null : id)}
       className="w-full flex items-center justify-between p-4 text-left hover:bg-[#1E1E1E] transition-colors rounded-t-xl">
       <span className="text-white font-semibold">{label}</span>
@@ -85,7 +104,19 @@ export default function SiteYonetimiPage() {
 
   const inputCls = "w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none"
   const labelCls = "text-gray-400 text-xs mb-1 block"
-  const saveBtnCls = (sec: string) => `flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${saving === sec ? 'opacity-50' : ''}`
+  const SaveBtn = ({ sec }: { sec: string }) => (
+    <button onClick={() => {
+      if (sec === 'contact') saveContact()
+      else if (sec === 'hero') saveHero()
+      else if (sec === 'stats') saveStats()
+      else if (sec === 'features') saveFeatures()
+      else if (sec === 'upcoming') saveUpcoming()
+      else savePricing(sec)
+    }}
+      className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50">
+      <Save size={14} />{saving === sec || saving === sec + 'info' ? 'Kaydediliyor...' : 'Kaydet'}
+    </button>
+  )
 
   if (loading) return <div className="flex items-center justify-center h-96"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-500" /></div>
 
@@ -99,9 +130,38 @@ export default function SiteYonetimiPage() {
         </div>
       </div>
 
+      {/* İLETİŞİM BİLGİLERİ */}
+      <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl overflow-hidden">
+        <SectionHeader id="contact" label="📞 İletişim Bilgileri" />
+        {openSection === 'contact' && (
+          <div className="p-5 border-t border-[#2A2A2A] space-y-3">
+            <p className="text-gray-500 text-xs">Bu bilgiler tüm sayfalarda (giriş, kayıt, destek hattı, footer) otomatik olarak kullanılır.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}><Phone size={10} className="inline mr-1" />Telefon</label>
+                <input className={inputCls} value={contact.phone} onChange={e => setContact(c => ({ ...c, phone: e.target.value }))} placeholder="0850 123 45 67" />
+              </div>
+              <div>
+                <label className={labelCls}><Mail size={10} className="inline mr-1" />E-posta</label>
+                <input className={inputCls} value={contact.email} onChange={e => setContact(c => ({ ...c, email: e.target.value }))} placeholder="info@bilgiortagim.com" />
+              </div>
+              <div>
+                <label className={labelCls}><MapPin size={10} className="inline mr-1" />Adres</label>
+                <input className={inputCls} value={contact.address} onChange={e => setContact(c => ({ ...c, address: e.target.value }))} placeholder="İstanbul, Türkiye" />
+              </div>
+              <div>
+                <label className={labelCls}><Clock size={10} className="inline mr-1" />Destek Saatleri</label>
+                <input className={inputCls} value={contact.support_hours} onChange={e => setContact(c => ({ ...c, support_hours: e.target.value }))} placeholder="7/24" />
+              </div>
+            </div>
+            <SaveBtn sec="contact" />
+          </div>
+        )}
+      </div>
+
       {/* HERO */}
       <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl overflow-hidden">
-        <SectionHeader id="hero" label="🚀 Hero Bölümü (Ana Başlık)" />
+        <SectionHeader id="hero" label="🚀 Hero Bölümü" />
         {openSection === 'hero' && (
           <div className="p-5 border-t border-[#2A2A2A] space-y-3">
             <div className="grid grid-cols-2 gap-3">
@@ -112,7 +172,7 @@ export default function SiteYonetimiPage() {
               <div><label className={labelCls}>İkinci CTA Butonu</label><input className={inputCls} value={hero.cta_secondary || ''} onChange={e => setHero((h: any) => ({ ...h, cta_secondary: e.target.value }))} /></div>
             </div>
             <div><label className={labelCls}>Açıklama</label><textarea className={inputCls + ' resize-none'} rows={2} value={hero.description || ''} onChange={e => setHero((h: any) => ({ ...h, description: e.target.value }))} /></div>
-            <button onClick={saveHero} className={saveBtnCls('hero')}><Save size={14} />{saving === 'hero' ? 'Kaydediliyor...' : 'Kaydet'}</button>
+            <SaveBtn sec="hero" />
           </div>
         )}
       </div>
@@ -128,7 +188,7 @@ export default function SiteYonetimiPage() {
                 <div><label className={labelCls}>Etiket</label><input className={inputCls} value={s.label || ''} onChange={e => setStats(arr => arr.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} /></div>
               </div>
             ))}
-            <button onClick={saveStats} className={saveBtnCls('stats')}><Save size={14} />{saving === 'stats' ? 'Kaydediliyor...' : 'Kaydet'}</button>
+            <SaveBtn sec="stats" />
           </div>
         )}
       </div>
@@ -146,14 +206,14 @@ export default function SiteYonetimiPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><label className={labelCls}>Başlık</label><input className={inputCls} value={f.title || ''} onChange={e => setFeatures(arr => arr.map((x, j) => j === i ? { ...x, title: e.target.value } : x))} /></div>
-                  <div><label className={labelCls}>İkon (lucide adı, örn: Search)</label><input className={inputCls} value={f.icon || ''} onChange={e => setFeatures(arr => arr.map((x, j) => j === i ? { ...x, icon: e.target.value } : x))} /></div>
+                  <div><label className={labelCls}>İkon (lucide adı)</label><input className={inputCls} value={f.icon || ''} onChange={e => setFeatures(arr => arr.map((x, j) => j === i ? { ...x, icon: e.target.value } : x))} /></div>
                 </div>
                 <div><label className={labelCls}>Açıklama</label><input className={inputCls} value={f.description || ''} onChange={e => setFeatures(arr => arr.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} /></div>
               </div>
             ))}
             <div className="flex gap-3">
               <button onClick={addFeature} className="flex items-center gap-2 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 px-3 py-2 rounded-lg text-sm hover:border-[#3A3A3A] transition-colors"><Plus size={14} /> Özellik Ekle</button>
-              <button onClick={saveFeatures} className={saveBtnCls('features')}><Save size={14} />{saving === 'features' ? 'Kaydediliyor...' : 'Kaydet'}</button>
+              <SaveBtn sec="features" />
             </div>
           </div>
         )}
@@ -176,7 +236,7 @@ export default function SiteYonetimiPage() {
                     value={(pricing[plan]?.features || []).join('\n')}
                     onChange={e => setPricing((p: any) => ({ ...p, [plan]: { ...p[plan], features: e.target.value.split('\n') } }))} />
                 </div>
-                <button onClick={() => savePricing(plan)} className={saveBtnCls(plan)}><Save size={14} />{saving === plan ? 'Kaydediliyor...' : `${plan} Planını Kaydet`}</button>
+                <SaveBtn sec={plan} />
               </div>
             ))}
           </div>
@@ -185,7 +245,7 @@ export default function SiteYonetimiPage() {
 
       {/* UPCOMING */}
       <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl overflow-hidden">
-        <SectionHeader id="upcoming" label="🔜 Yakında Gelecek Özellikler" />
+        <SectionHeader id="upcoming" label="🔜 Yakında Gelecek" />
         {openSection === 'upcoming' && (
           <div className="p-5 border-t border-[#2A2A2A] space-y-4">
             {upcoming.map((u, i) => (
@@ -196,14 +256,14 @@ export default function SiteYonetimiPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><label className={labelCls}>Başlık</label><input className={inputCls} value={u.title || ''} onChange={e => setUpcoming(arr => arr.map((x, j) => j === i ? { ...x, title: e.target.value } : x))} /></div>
-                  <div><label className={labelCls}>Tahmini Tarih (örn: Q2 2025)</label><input className={inputCls} value={u.estimated || ''} onChange={e => setUpcoming(arr => arr.map((x, j) => j === i ? { ...x, estimated: e.target.value } : x))} /></div>
+                  <div><label className={labelCls}>Tahmini Tarih</label><input className={inputCls} value={u.estimated || ''} onChange={e => setUpcoming(arr => arr.map((x, j) => j === i ? { ...x, estimated: e.target.value } : x))} /></div>
                 </div>
                 <div><label className={labelCls}>Açıklama</label><input className={inputCls} value={u.description || ''} onChange={e => setUpcoming(arr => arr.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} /></div>
               </div>
             ))}
             <div className="flex gap-3">
-              <button onClick={addUpcoming} className="flex items-center gap-2 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 px-3 py-2 rounded-lg text-sm hover:border-[#3A3A3A] transition-colors"><Plus size={14} /> Özellik Ekle</button>
-              <button onClick={saveUpcoming} className={saveBtnCls('upcoming')}><Save size={14} />{saving === 'upcoming' ? 'Kaydediliyor...' : 'Kaydet'}</button>
+              <button onClick={addUpcoming} className="flex items-center gap-2 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 px-3 py-2 rounded-lg text-sm hover:border-[#3A3A3A] transition-colors"><Plus size={14} /> Ekle</button>
+              <SaveBtn sec="upcoming" />
             </div>
           </div>
         )}

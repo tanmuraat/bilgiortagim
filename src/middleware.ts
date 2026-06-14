@@ -23,31 +23,96 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  // Korumalı sayfalar
-  const protectedPaths = ['/dashboard', '/musteri-sorgulama', '/kiralama-takvimi', '/araclarim', '/mini-muhasebe', '/raporlar', '/bildirimler', '/ayarlar', '/abonelik', '/admin']
-  const isProtected = protectedPaths.some(p => pathname.startsWith(p))
+  // Statik dosyalar ve API'yi atla
+  if (
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/api') ||
+    pathname.includes('.') ||
+    pathname.startsWith('/favicon')
+  ) {
+    return response
+  }
 
   // Auth sayfaları — giriş yapmışsa dashboard'a
-  if ((pathname === '/giris' || pathname === '/kayit') && user) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
-  }
-
-  // Korumalı sayfa — giriş yoksa girise
-  if (isProtected && !user) {
-    return NextResponse.redirect(new URL('/giris', request.url))
-  }
-
-  // Admin kontrolü
-  if (pathname.startsWith('/admin') && user) {
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-    if (profile?.role !== 'admin') {
+  if (pathname === '/giris' || pathname === '/kayit') {
+    if (user) {
+      const { data: profile } = await supabase.from('profiles').select('status, role').eq('id', user.id).single()
+      if (profile?.status === 'pending') return NextResponse.redirect(new URL('/onay-bekleniyor', request.url))
+      if (profile?.role === 'admin') return NextResponse.redirect(new URL('/admin', request.url))
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
+    return response
+  }
+
+  // Onay bekleniyor sayfası
+  if (pathname === '/onay-bekleniyor') {
+    if (!user) return NextResponse.redirect(new URL('/giris', request.url))
+    return response
+  }
+
+  // Admin sayfaları
+  if (pathname.startsWith('/admin')) {
+    if (!user) return NextResponse.redirect(new URL('/giris', request.url))
+    const { data: profile } = await supabase.from('profiles').select('role, status').eq('id', user.id).single()
+    if (profile?.status === 'pending') return NextResponse.redirect(new URL('/onay-bekleniyor', request.url))
+    if (profile?.role !== 'admin') return NextResponse.redirect(new URL('/dashboard', request.url))
+    return response
+  }
+
+  // Uygulama sayfaları
+  const appPaths = ['/dashboard', '/musteri-sorgulama', '/kiralama-takvimi', '/araclarim', '/mini-muhasebe', '/raporlar', '/bildirimler', '/ayarlar', '/abonelik']
+  const isAppPath = appPaths.some(p => pathname.startsWith(p))
+
+  if (isAppPath) {
+    if (!user) return NextResponse.redirect(new URL('/giris', request.url))
+
+    const { data: profile } = await supabase.from('profiles').select('status, subscription_plan, role, is_sub_user, permissions').eq('id', user.id).single()
+
+    if (!profile) return NextResponse.redirect(new URL('/giris', request.url))
+    if (profile.status === 'pending') return NextResponse.redirect(new URL('/onay-bekleniyor', request.url))
+    if (profile.status === 'rejected') return NextResponse.redirect(new URL('/giris', request.url))
+
+    // Alt kullanıcı yetki kontrolü
+    if (profile.is_sub_user) {
+      const permissions: string[] = profile.permissions || []
+      const permMap: Record<string, string> = {
+        '/musteri-sorgulama': 'musteri-sorgulama',
+        '/kiralama-takvimi': 'kiralama-takvimi',
+        '/araclarim': 'araclarim',
+        '/mini-muhasebe': 'mini-muhasebe',
+        '/raporlar': 'raporlar',
+        '/bildirimler': 'bildirimler',
+      }
+      for (const [path, perm] of Object.entries(permMap)) {
+        if (pathname.startsWith(path) && !permissions.includes(perm)) {
+          return NextResponse.redirect(new URL('/dashboard', request.url))
+        }
+      }
+      return response
+    }
+
+    // Premium gerektiren sayfalar
+    const premiumPaths = ['/kiralama-takvimi', '/mini-muhasebe', '/raporlar']
+    const needsPremium = premiumPaths.some(p => pathname.startsWith(p))
+    if (needsPremium && profile.subscription_plan !== 'premium') {
+      return NextResponse.redirect(new URL('/dashboard?upgrade=true', request.url))
+    }
+  }
+
+  // Ana sayfa — giriş yapılmışsa dashboard'a
+  if (pathname === '/') {
+    if (user) {
+      const { data: profile } = await supabase.from('profiles').select('status, role').eq('id', user.id).single()
+      if (profile?.role === 'admin') return NextResponse.redirect(new URL('/admin', request.url))
+      if (profile?.status === 'approved') return NextResponse.redirect(new URL('/dashboard', request.url))
+      if (profile?.status === 'pending') return NextResponse.redirect(new URL('/onay-bekleniyor', request.url))
+    }
+    return response
   }
 
   return response
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|api).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 }

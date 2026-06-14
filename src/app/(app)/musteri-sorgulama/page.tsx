@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { format } from 'date-fns'
 import { tr } from 'date-fns/locale'
-import { Search, Shield, AlertTriangle, CheckCircle, Plus, X, Upload } from 'lucide-react'
+import { Search, Shield, AlertTriangle, CheckCircle, Plus, X, Upload, FileText, Eye } from 'lucide-react'
 
 function maskTC(tc: string) {
   if (!tc || tc.length < 11) return '***'
@@ -32,14 +32,14 @@ export default function MusteriSorgulamaPage() {
   const [stats, setStats] = useState({ total: 0, risky: 0, clear: 0 })
   const [profile, setProfile] = useState<any>(null)
   const [todayQueries, setTodayQueries] = useState(0)
+  const [viewingDocId, setViewingDocId] = useState<string | null>(null)
+  const [docUrls, setDocUrls] = useState<Record<string, string>>({})
 
-  // Consent modal
   const [showConsentModal, setShowConsentModal] = useState(false)
   const [consent, setConsent] = useState(false)
   const [pendingTC, setPendingTC] = useState('')
   const [newCustomerForm, setNewCustomerForm] = useState({ full_name: '', phone: '' })
 
-  // Incident modal
   const [showIncidentModal, setShowIncidentModal] = useState(false)
   const [incidentForm, setIncidentForm] = useState({
     incident_type: 'payment_delay', amount: '',
@@ -68,7 +68,7 @@ export default function MusteriSorgulamaPage() {
   const handleQuery = async () => {
     if (tc.length !== 11) { alert('TC kimlik numarası 11 haneli olmalıdır.'); return }
     if (profile?.subscription_plan === 'pro' && todayQueries >= 10) {
-      alert('Günlük 10 sorgu limitinize ulaştınız. Premium plana geçin.'); return
+      alert('Günlük 10 sorgu limitinize ulaştınız.'); return
     }
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
@@ -79,8 +79,11 @@ export default function MusteriSorgulamaPage() {
 
     if (existing) {
       setResult(existing)
-      // Tüm firmaların bu müşteriye eklediği kayıtları getir
-      const { data: inc } = await supabase.from('customer_incidents').select('*').eq('customer_id', existing.id).order('incident_date', { ascending: false })
+      setViewingDocId(null)
+      setDocUrls({})
+      // Tüm firmaların eklediği yorumları getir
+      const { data: inc } = await supabase.from('customer_incidents')
+        .select('*').eq('customer_id', existing.id).order('incident_date', { ascending: false })
       setIncidents(inc || [])
       await supabase.from('query_logs').insert({ user_id: user.id, tc_hash: hash, customer_name: existing.full_name, queried_at: new Date().toISOString() })
       setTodayQueries(q => q + 1)
@@ -101,23 +104,46 @@ export default function MusteriSorgulamaPage() {
 
     const hash = await sha256(pendingTC)
     const { data: newCustomer, error } = await supabase.from('customer_records').insert({
-      tc_hash: hash,
-      tc_encrypted: pendingTC,
+      tc_hash: hash, tc_encrypted: pendingTC,
       full_name: newCustomerForm.full_name,
       phone_encrypted: newCustomerForm.phone,
-      risk_level: 'clear',
-      rental_count: 0,
-      query_count: 1,
+      risk_level: 'clear', rental_count: 0, query_count: 1,
       last_queried_at: new Date().toISOString(),
     }).select().single()
 
     if (!error && newCustomer) {
       setResult(newCustomer)
       setIncidents([])
+      setViewingDocId(null)
+      setDocUrls({})
       await supabase.from('query_logs').insert({ user_id: user.id, tc_hash: hash, customer_name: newCustomerForm.full_name, queried_at: new Date().toISOString() })
       setTodayQueries(q => q + 1)
     }
     setShowConsentModal(false)
+  }
+
+  // Belge URL'ini al — public URL veya storage path
+  const getDocUrl = useCallback(async (incidentId: string, docUrl: string) => {
+    if (docUrls[incidentId]) return // Zaten yüklendi
+
+    let url = docUrl
+    // Eğer tam URL değilse storage'dan al
+    if (!docUrl.startsWith('http')) {
+      const { data } = await supabase.storage.from('receipts').createSignedUrl(docUrl, 3600)
+      if (data?.signedUrl) url = data.signedUrl
+    }
+    setDocUrls(prev => ({ ...prev, [incidentId]: url }))
+  }, [supabase, docUrls])
+
+  const toggleDoc = async (inc: any) => {
+    if (viewingDocId === inc.id) {
+      setViewingDocId(null)
+      return
+    }
+    setViewingDocId(inc.id)
+    if (inc.document_url && !docUrls[inc.id]) {
+      await getDocUrl(inc.id, inc.document_url)
+    }
   }
 
   const handleAddIncident = async () => {
@@ -129,24 +155,24 @@ export default function MusteriSorgulamaPage() {
     let document_url = null
     if (incidentFile) {
       const ext = incidentFile.name.split('.').pop()
-      const path = `${user.id}/${Date.now()}.${ext}`
-      const { data: uploadData } = await supabase.storage.from('receipts').upload(path, incidentFile)
-      if (uploadData) {
+      const path = `incidents/${user.id}/${Date.now()}.${ext}`
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('receipts').upload(path, incidentFile, { upsert: false })
+      if (!uploadError && uploadData) {
+        // Public URL al
         const { data: urlData } = supabase.storage.from('receipts').getPublicUrl(path)
         document_url = urlData?.publicUrl
       }
     }
 
     await supabase.from('customer_incidents').insert({
-      customer_id: result.id,
-      reported_by: user.id,
+      customer_id: result.id, reported_by: user.id,
       company_name: profile?.company_name,
       incident_type: incidentForm.incident_type,
       amount: incidentForm.amount ? Number(incidentForm.amount) : null,
       description: incidentForm.description,
       incident_date: incidentForm.incident_date,
-      document_url,
-      status: 'open',
+      document_url, status: 'open',
     })
 
     if (incidentForm.incident_type !== 'positive') {
@@ -154,7 +180,8 @@ export default function MusteriSorgulamaPage() {
       setResult((r: any) => ({ ...r, risk_level: 'risky' }))
     }
 
-    const { data: inc } = await supabase.from('customer_incidents').select('*').eq('customer_id', result.id).order('incident_date', { ascending: false })
+    const { data: inc } = await supabase.from('customer_incidents')
+      .select('*').eq('customer_id', result.id).order('incident_date', { ascending: false })
     setIncidents(inc || [])
     setShowIncidentModal(false)
     setIncidentForm({ incident_type: 'payment_delay', amount: '', incident_date: format(new Date(), 'yyyy-MM-dd'), description: '' })
@@ -168,6 +195,7 @@ export default function MusteriSorgulamaPage() {
     risky: { label: 'Riskli', color: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400/20', icon: AlertTriangle },
     blacklisted: { label: 'Kara Liste', color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/20', icon: Shield },
   }
+
   const incidentTypeLabel: Record<string, string> = {
     payment_delay: 'Ödeme Gecikmesi', damage: 'Araç Hasarı',
     contract_breach: 'Sözleşme İhlali', positive: 'Olumlu Deneyim', other: 'Diğer',
@@ -223,7 +251,6 @@ export default function MusteriSorgulamaPage() {
         </div>
       </div>
 
-      {/* Result */}
       {result && (
         <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-5 space-y-5">
           <div className="flex items-start justify-between">
@@ -248,7 +275,7 @@ export default function MusteriSorgulamaPage() {
                 className="flex items-center gap-2 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-300 px-3 py-2 rounded-lg text-sm hover:border-red-500/50 transition-colors">
                 <Plus size={14} /> Yorum Ekle
               </button>
-              <button onClick={() => { setResult(null); setTc(''); setIncidents([]) }}
+              <button onClick={() => { setResult(null); setTc(''); setIncidents([]); setViewingDocId(null); setDocUrls({}) }}
                 className="flex items-center gap-2 bg-red-600/10 border border-red-600/20 text-red-400 px-3 py-2 rounded-lg text-sm hover:bg-red-600/20 transition-colors">
                 Yeni Sorgu
               </button>
@@ -296,32 +323,78 @@ export default function MusteriSorgulamaPage() {
                 </button>
               ))}
             </div>
-            <div className="space-y-2">
+            <div className="space-y-3">
               {filteredIncidents.length === 0 ? (
                 <div className="text-center text-gray-500 text-sm py-8">Bu kategoride kayıt bulunmuyor</div>
               ) : filteredIncidents.map(inc => (
-                <div key={inc.id} className="bg-[#1E1E1E] rounded-lg p-4">
+                <div key={inc.id} className={`bg-[#1E1E1E] rounded-lg p-4 border ${inc.incident_type === 'positive' ? 'border-green-500/10' : 'border-red-500/10'}`}>
                   <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
                       <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${inc.incident_type === 'positive' ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
                         {inc.incident_type === 'positive' ? <CheckCircle size={14} className="text-green-400" /> : <AlertTriangle size={14} className="text-red-400" />}
                       </div>
-                      <div>
+                      <div className="flex-1 min-w-0">
                         <div className="text-white text-sm font-medium">{incidentTypeLabel[inc.incident_type] || inc.incident_type}</div>
                         <div className="text-gray-400 text-xs mt-0.5">{inc.description}</div>
-                        <div className="text-gray-600 text-xs mt-0.5">{inc.company_name} · {inc.incident_date ? format(new Date(inc.incident_date), 'dd MMM yyyy', { locale: tr }) : ''}</div>
+                        <div className="text-gray-600 text-xs mt-0.5">
+                          {inc.company_name} · {inc.incident_date ? format(new Date(inc.incident_date), 'dd MMM yyyy', { locale: tr }) : ''}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
+                    <div className="flex items-center gap-2 flex-shrink-0 ml-3">
                       {inc.amount && <div className="text-red-400 font-semibold text-sm">₺{Number(inc.amount).toLocaleString('tr-TR')}</div>}
                       {inc.document_url && (
-                        <a href={inc.document_url} target="_blank" rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-blue-400 hover:text-blue-300 text-xs border border-blue-400/30 px-2 py-1 rounded-lg">
-                          <Upload size={10} /> Belge
-                        </a>
+                        <button onClick={() => toggleDoc(inc)}
+                          className="flex items-center gap-1 text-blue-400 hover:text-blue-300 text-xs border border-blue-400/30 px-2 py-1 rounded-lg transition-colors">
+                          <FileText size={11} /> {viewingDocId === inc.id ? 'Gizle' : 'Belge'}
+                        </button>
                       )}
                     </div>
                   </div>
+
+                  {/* BELGE GÖRÜNTÜLEME */}
+                  {viewingDocId === inc.id && inc.document_url && (
+                    <div className="mt-3 rounded-xl overflow-hidden border border-[#2A2A2A]">
+                      {!docUrls[inc.id] ? (
+                        <div className="bg-[#1A1A1A] p-6 text-center">
+                          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400 mx-auto mb-2" />
+                          <p className="text-gray-500 text-xs">Belge yükleniyor...</p>
+                        </div>
+                      ) : docUrls[inc.id].toLowerCase().includes('.pdf') ? (
+                        <div className="bg-[#1A1A1A] p-6 text-center">
+                          <FileText size={32} className="text-blue-400 mx-auto mb-3" />
+                          <p className="text-gray-400 text-sm mb-3">PDF Belgesi</p>
+                          <a href={docUrls[inc.id]} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm transition-colors">
+                            <Eye size={14} /> PDF'i Görüntüle
+                          </a>
+                        </div>
+                      ) : (
+                        <div className="relative select-none" onContextMenu={e => e.preventDefault()}>
+                          <img
+                            src={docUrls[inc.id]}
+                            alt="Belge"
+                            className="w-full max-h-72 object-contain bg-[#0A0A0A]"
+                            onContextMenu={e => e.preventDefault()}
+                            draggable={false}
+                          />
+                          {/* Watermark */}
+                          <div className="absolute inset-0 pointer-events-none overflow-hidden flex flex-col justify-around">
+                            {[0, 1, 2, 3].map(i => (
+                              <div key={i} className="text-white/8 font-bold text-lg rotate-45 whitespace-nowrap select-none text-center">
+                                BİLGİORTAĞIM · SADECE GÖRÜNTÜLEME · BİLGİORTAĞIM · SADECE GÖRÜNTÜLEME
+                              </div>
+                            ))}
+                          </div>
+                          <div className="absolute inset-0 bg-transparent" onContextMenu={e => e.preventDefault()} />
+                        </div>
+                      )}
+                      <div className="bg-[#1A1A1A] border-t border-[#2A2A2A] px-3 py-2 flex items-center gap-2">
+                        <Shield size={11} className="text-gray-600" />
+                        <span className="text-gray-600 text-xs">Yalnızca görüntüleme amaçlıdır. İndirme yasaktır.</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -334,17 +407,15 @@ export default function MusteriSorgulamaPage() {
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl w-full max-w-md p-6">
             <h3 className="text-white font-semibold text-lg mb-2">Yeni Müşteri Kaydı</h3>
-            <p className="text-gray-400 text-sm mb-5">Bu TC numarasına ait kayıt bulunamadı. Müşteriyi sisteme eklemek için bilgilerini girin ve onayı alın.</p>
+            <p className="text-gray-400 text-sm mb-5">Bu TC numarasına ait kayıt bulunamadı. Bilgileri girin ve onayı alın.</p>
             <div className="space-y-3 mb-4">
               <div>
                 <label className="text-gray-400 text-xs mb-1.5 block">Ad Soyad *</label>
-                <input value={newCustomerForm.full_name} onChange={e => setNewCustomerForm(f => ({ ...f, full_name: e.target.value }))}
-                  placeholder="Müşterinin adı soyadı" className={inputCls} />
+                <input value={newCustomerForm.full_name} onChange={e => setNewCustomerForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Müşterinin adı soyadı" className={inputCls} />
               </div>
               <div>
-                <label className="text-gray-400 text-xs mb-1.5 block">Telefon Numarası</label>
-                <input value={newCustomerForm.phone} onChange={e => setNewCustomerForm(f => ({ ...f, phone: e.target.value }))}
-                  placeholder="+90 5XX XXX XX XX" className={inputCls} />
+                <label className="text-gray-400 text-xs mb-1.5 block">Telefon</label>
+                <input value={newCustomerForm.phone} onChange={e => setNewCustomerForm(f => ({ ...f, phone: e.target.value }))} placeholder="+90 5XX XXX XX XX" className={inputCls} />
               </div>
             </div>
             <div className="bg-[#1E1E1E] border border-[#2A2A2A] rounded-lg p-4 mb-4">
@@ -352,17 +423,15 @@ export default function MusteriSorgulamaPage() {
                 <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} className="mt-1 accent-red-500 flex-shrink-0" />
                 <div>
                   <span className="text-white text-sm leading-relaxed block">
-                    Müşteri olarak yukarıdaki kimlik bilgilerimin araç kiralama hizmet sürecinde BilgiOrtağım güvenli platformu aracılığıyla yetkili kiralama firmalarıyla paylaşılmasına onay verdiğimi beyan ediyor ve bu onayı müşteri adına teyit ediyorum.
+                    Müşteri olarak kimlik bilgilerimin araç kiralama hizmet sürecinde BilgiOrtağım güvenli platformu aracılığıyla yetkili kiralama firmalarıyla paylaşılmasına onay verdiğimi beyan ediyor ve bu onayı müşteri adına teyit ediyorum.
                   </span>
-                  <span className="text-gray-500 text-xs mt-2 block">Firma yetkilisi olarak müşterinin bu onayı verdiğini teyit ediyorsunuz. Bilgiler şifrelenerek saklanır.</span>
+                  <span className="text-gray-500 text-xs mt-2 block">Firma yetkilisi olarak müşterinin bu onayı verdiğini teyit ediyorsunuz.</span>
                 </div>
               </label>
             </div>
             <div className="flex gap-3">
-              <button onClick={() => { setShowConsentModal(false); setConsent(false) }}
-                className="flex-1 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 py-2.5 rounded-lg hover:bg-[#252525] transition-colors">İptal</button>
-              <button onClick={handleNewCustomer} disabled={!consent || !newCustomerForm.full_name}
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">Kaydet</button>
+              <button onClick={() => { setShowConsentModal(false); setConsent(false) }} className="flex-1 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 py-2.5 rounded-lg hover:bg-[#252525] transition-colors">İptal</button>
+              <button onClick={handleNewCustomer} disabled={!consent || !newCustomerForm.full_name} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">Kaydet</button>
             </div>
           </div>
         </div>
@@ -400,19 +469,21 @@ export default function MusteriSorgulamaPage() {
               <div>
                 <label className="text-gray-400 text-xs mb-1.5 block">Açıklama *</label>
                 <textarea value={incidentForm.description} onChange={e => setIncidentForm(f => ({ ...f, description: e.target.value }))}
-                  rows={3} placeholder="Yaşanan olayı kısaca açıklayın..."
-                  className={inputCls + ' resize-none'} />
+                  rows={3} placeholder="Yaşanan olayı kısaca açıklayın..." className={inputCls + ' resize-none'} />
               </div>
               <div>
-                <label className="text-gray-400 text-xs mb-1.5 block">Belge Ekle (opsiyonel — fatura, fotoğraf, vb.)</label>
-                <label className="flex items-center gap-3 w-full bg-[#1E1E1E] border border-dashed border-[#3A3A3A] text-gray-400 rounded-lg px-4 py-3 cursor-pointer hover:border-red-500/50 transition-colors">
-                  <Upload size={15} />
-                  <span className="text-sm">{incidentFile ? incidentFile.name : 'Dosya seç (PDF, JPG, PNG)'}</span>
+                <label className="text-gray-400 text-xs mb-1.5 block">Belge Ekle (opsiyonel)</label>
+                <label className={`flex items-center gap-3 w-full bg-[#1E1E1E] border border-dashed rounded-lg px-4 py-3 cursor-pointer transition-colors ${incidentFile ? 'border-green-500/50 bg-green-500/5' : 'border-[#3A3A3A] hover:border-red-500/50'}`}>
+                  <Upload size={15} className={incidentFile ? 'text-green-400' : 'text-gray-500'} />
+                  <span className={`text-sm ${incidentFile ? 'text-green-400' : 'text-gray-400'}`}>{incidentFile ? incidentFile.name : 'Dosya seç (PDF, JPG, PNG)'}</span>
                   <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="hidden" onChange={e => { if (e.target.files?.[0]) setIncidentFile(e.target.files[0]) }} />
                 </label>
+                {incidentFile && (
+                  <button onClick={() => setIncidentFile(null)} className="text-xs text-gray-500 hover:text-red-400 mt-1 transition-colors">Dosyayı kaldır</button>
+                )}
               </div>
               <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-lg p-3">
-                <p className="text-yellow-400/80 text-xs">Eklediğiniz yorum BilgiOrtağım platformundaki tüm yetkili kiralama firmaları tarafından görülebilir. Lütfen gerçek ve belgelenebilir bilgi paylaşın.</p>
+                <p className="text-yellow-400/80 text-xs">Eklediğiniz yorum tüm yetkili kiralama firmaları tarafından görülebilir. Gerçek ve belgelenebilir bilgi paylaşın.</p>
               </div>
             </div>
             <div className="flex gap-3 p-5 border-t border-[#2A2A2A]">

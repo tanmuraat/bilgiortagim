@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
   LayoutDashboard, Users, Clock, CreditCard, Search,
-  Bell, Globe, LogOut, Shield, ChevronRight
+  Bell, Globe, LogOut, Shield, Users2
 } from 'lucide-react'
 
 const NAV = [
@@ -15,6 +15,7 @@ const NAV = [
   { href: '/admin/kullanicilar', label: 'Kullanıcılar', icon: Users },
   { href: '/admin/abonelikler', label: 'Abonelikler', icon: CreditCard },
   { href: '/admin/sorgu-loglari', label: 'Sorgu Logları', icon: Search },
+  { href: '/admin/musteri-listesi', label: 'Müşteri Listesi', icon: Users2 },
   { href: '/admin/bildirim-gonder', label: 'Bildirim Gönder', icon: Bell },
   { href: '/admin/site-yonetimi', label: 'Site Yönetimi', icon: Globe },
 ]
@@ -46,9 +47,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="flex h-screen bg-[#0A0A0A] overflow-hidden">
-      {/* Sidebar */}
       <aside className="w-60 bg-[#141414] border-r border-[#2A2A2A] flex flex-col flex-shrink-0">
-        {/* Logo */}
         <div className="p-5 border-b border-[#2A2A2A]">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center font-bold text-white text-sm">B</div>
@@ -59,7 +58,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </div>
 
-        {/* Nav */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {NAV.map(item => {
             const active = pathname === item.href || (item.href !== '/admin' && pathname.startsWith(item.href))
@@ -76,22 +74,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           })}
         </nav>
 
-        {/* User */}
         <div className="p-3 border-t border-[#2A2A2A]">
-          <div className="flex items-center gap-3 px-3 py-2 mb-1">
-            <div className="w-7 h-7 bg-red-600 rounded-full flex items-center justify-center text-white text-xs font-bold">{adminName[0]}</div>
+          <div className="flex items-center gap-2 px-2 py-1.5 mb-1">
+            <div className="w-7 h-7 bg-red-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
+              {adminName[0]?.toUpperCase() || 'A'}
+            </div>
             <div className="flex-1 min-w-0">
               <div className="text-white text-xs font-medium truncate">{adminName}</div>
               <div className="text-gray-500 text-[10px]">Sistem Admini</div>
             </div>
           </div>
-          <button onClick={handleLogout} className="flex items-center gap-2 w-full px-3 py-2 text-gray-400 hover:text-red-400 text-sm rounded-lg hover:bg-[#1E1E1E] transition-colors">
+          <button onClick={handleLogout} className="flex items-center gap-2 w-full px-2 py-2 text-gray-400 hover:text-red-400 text-sm rounded-lg hover:bg-[#1E1E1E] transition-colors">
             <LogOut size={14} /> Çıkış Yap
           </button>
         </div>
       </aside>
 
-      {/* Main */}
       <main className="flex-1 overflow-y-auto">
         {children}
       </main>
