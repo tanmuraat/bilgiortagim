@@ -52,7 +52,7 @@ function GirisForm() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-12 h-12 bg-red-600 rounded-xl flex items-center justify-center font-bold text-white text-xl mx-auto mb-4">B</div>
+          <img src="/logo.png" alt="BilgiOrtağım" className="h-16 w-auto object-contain mx-auto mb-4" />
           <h1 className="text-white font-bold text-2xl">BilgiOrtağım</h1>
           <p className="text-gray-500 text-sm mt-1">Rent A Car Yönetim Platformu</p>
         </div>

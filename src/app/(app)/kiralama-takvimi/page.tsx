@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { toProxyUrl, downloadFile } from '@/lib/file-url'
 import { createClient } from '@/lib/supabase/client'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, differenceInDays, addMonths, subMonths } from 'date-fns'
 import { tr } from 'date-fns/locale'
@@ -234,14 +235,66 @@ export default function KiralamaTakvimiPage() {
     let tc_hash = null
     if (form.customer_tc && form.customer_tc.length === 11) {
       tc_hash = hashTC(form.customer_tc)
-      const { data: existingCustomer } = await supabase.from('customer_records').select('*').eq('tc_hash', tc_hash).single()
+
+      // customer_records'ta bu TC var mı kontrol et
+      const { data: existingCustomer } = await supabase
+        .from('customer_records')
+        .select('id, total_records, last_company_name')
+        .eq('tc_hash', tc_hash)
+        .maybeSingle()
+
+      const vehicleInfo = vehicles.find((v: any) => v.id === form.vehicle_id)
+      const vehiclePlate = vehicleInfo?.plate || ''
+
       if (existingCustomer) {
+        // Mevcut müşteri: total_records artır, last bilgileri güncelle
         await supabase.from('customer_records').update({
-          rental_count: (existingCustomer.rental_count || 0) + 1,
-          last_rental_company: profile?.company_name,
-          last_rental_date: form.start_date,
-          last_queried_at: new Date().toISOString(),
-        }).eq('tc_hash', tc_hash)
+          total_records: (existingCustomer.total_records || 0) + 1,
+          last_rental_at: new Date().toISOString(),
+          last_company_name: profile?.company_name || '',
+          updated_at: new Date().toISOString(),
+        }).eq('id', existingCustomer.id)
+
+        // customer_record_items'a kiralama kaydı ekle
+        await supabase.from('customer_record_items').insert({
+          customer_id: existingCustomer.id,
+          record_type: 'rental',
+          title: `Araç Kiralama — ${vehiclePlate}`,
+          description: `${form.start_date} – ${form.end_date} tarihleri arasında kiralama`,
+          company_name: profile?.company_name || '',
+          vehicle_plate: vehiclePlate,
+          amount: totalPrice,
+          payment_status: form.payment_status === 'paid' ? 'paid' : 'unpaid',
+          occurred_at: new Date().toISOString(),
+        })
+      } else {
+        // Yeni müşteri: customer_records'a ekle
+        const { data: newCustomer } = await supabase.from('customer_records').insert({
+          tc_hash,
+          full_name: form.customer_name,
+          phone_encrypted: form.customer_phone || '',
+          risk_status: 'safe',
+          total_records: 1,
+          negative_records: 0,
+          total_debt: 0,
+          last_rental_at: new Date().toISOString(),
+          last_company_name: profile?.company_name || '',
+        }).select('id').single()
+
+        // customer_record_items'a kiralama kaydı ekle
+        if (newCustomer) {
+          await supabase.from('customer_record_items').insert({
+            customer_id: newCustomer.id,
+            record_type: 'rental',
+            title: `Araç Kiralama — ${vehiclePlate}`,
+            description: `${form.start_date} – ${form.end_date} tarihleri arasında kiralama`,
+            company_name: profile?.company_name || '',
+            vehicle_plate: vehiclePlate,
+            amount: totalPrice,
+            payment_status: form.payment_status === 'paid' ? 'paid' : 'unpaid',
+            occurred_at: new Date().toISOString(),
+          })
+        }
       }
     }
 
@@ -293,6 +346,33 @@ export default function KiralamaTakvimiPage() {
   const handleExtend = async () => {
     if (!extendDate || !selectedRental) return
     setSaving(true)
+
+    // ÇAKIŞMA KONTROLÜ: mevcut bitiş tarihi ile yeni bitiş tarihi arasında
+    // aynı araç için başka aktif kiralama var mı?
+    const currentEnd = selectedRental.end_date  // mevcut bitiş
+    const newEnd = extendDate                    // yeni bitiş
+
+    // Aradaki günler için çakışan kiralama ara (bu kiralamanın kendisi hariç)
+    const { data: conflicts } = await supabase
+      .from('rentals')
+      .select('id, start_date, end_date, customer_name, payment_status')
+      .eq('vehicle_id', selectedRental.vehicle_id)
+      .neq('id', selectedRental.id)
+      .neq('status', 'completed')
+      // currentEnd'den sonra başlayan VE newEnd'den önce biten = çakışır
+      .lt('start_date', newEnd)
+      .gt('end_date', currentEnd)
+
+    if (conflicts && conflicts.length > 0) {
+      const c = conflicts[0]
+      const msg = c.payment_status === 'pending'
+        ? `Bu tarih aralığında ${c.customer_name} adlı müşterinin ödeme bekleyen randevusu var (${format(new Date(c.start_date), 'dd.MM.yyyy')} – ${format(new Date(c.end_date), 'dd.MM.yyyy')}). Süre uzatılamaz.`
+        : `Bu tarih aralığında ${c.customer_name} adlı müşterinin kiralaması var (${format(new Date(c.start_date), 'dd.MM.yyyy')} – ${format(new Date(c.end_date), 'dd.MM.yyyy')}). Süre uzatılamaz.`
+      alert('⚠️ Çakışma tespit edildi!\n\n' + msg)
+      setSaving(false)
+      return
+    }
+
     const newTotal = differenceInDays(new Date(extendDate), new Date(selectedRental.start_date)) * Number(selectedRental.daily_price)
     await supabase.from('rentals').update({ end_date: extendDate, total_price: newTotal }).eq('id', selectedRental.id)
     setShowExtendModal(false)
@@ -619,10 +699,20 @@ export default function KiralamaTakvimiPage() {
                   <td className="px-4 py-3">
                     {r.contract_url ? (
                       <div className="flex items-center gap-1.5">
-                        <a href={r.contract_url} target="_blank" rel="noopener noreferrer"
+                        <a href={toProxyUrl(r.contract_url) || '#'} target="_blank" rel="noopener noreferrer"
                           className="flex items-center gap-1 text-blue-400 hover:text-blue-300 text-xs"><Eye size={11} /> Gör</a>
-                        <a href={r.contract_url} download
-                          className="flex items-center gap-1 text-gray-400 hover:text-white text-xs"><Download size={11} /> İndir</a>
+                        <button type="button" onClick={async () => {
+                          try {
+                            const res = await fetch(toProxyUrl(r.contract_url) || r.contract_url)
+                            const blob = await res.blob()
+                            const url = URL.createObjectURL(blob)
+                            const a = document.createElement('a')
+                            a.href = url
+                            a.download = r.contract_url.split('/').pop() ?? 'sozlesme'
+                            a.click()
+                            URL.revokeObjectURL(url)
+                          } catch { window.open(r.contract_url, '_blank') }
+                        }} className="flex items-center gap-1 text-gray-400 hover:text-white text-xs"><Download size={11} /> İndir</button>
                       </div>
                     ) : <span className="text-gray-600 text-xs">Yok</span>}
                   </td>
@@ -784,14 +874,25 @@ export default function KiralamaTakvimiPage() {
                     📄 Kira Sözleşmesi
                   </div>
                   <div className="flex gap-2">
-                    <a href={selectedRental.contract_url} target="_blank" rel="noopener noreferrer"
+                    <a href={toProxyUrl(selectedRental.contract_url) || '#'} target="_blank" rel="noopener noreferrer"
                       className="flex items-center gap-2 bg-blue-600/20 border border-blue-600/30 text-blue-400 px-3 py-2 rounded-lg text-sm hover:bg-blue-600/30 transition-colors">
                       <Eye size={14} /> Görüntüle
                     </a>
-                    <a href={selectedRental.contract_url} download
+                    <button type="button" onClick={async () => {
+                        try {
+                          const res = await fetch(toProxyUrl(selectedRental.contract_url) || selectedRental.contract_url)
+                          const blob = await res.blob()
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = selectedRental.contract_url.split('/').pop() ?? 'sozlesme'
+                          a.click()
+                          URL.revokeObjectURL(url)
+                        } catch { window.open(selectedRental.contract_url, '_blank') }
+                      }}
                       className="flex items-center gap-2 bg-blue-600/10 border border-blue-600/20 text-blue-300 px-3 py-2 rounded-lg text-sm hover:bg-blue-600/20 transition-colors">
                       <Download size={14} /> İndir
-                    </a>
+                    </button>
                   </div>
                 </div>
               )}

@@ -76,7 +76,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         .or(`user_id.eq.${user.id},user_id.is.null`)
         .order('created_at', { ascending: false }).limit(20)
       setNotifications(notifs || [])
-      setUnreadCount((notifs || []).filter((n: any) => !n.is_read).length)
+
+      // Araç muayene/sigorta uyarılarını da say (bildirimler sayfasındaki mantıkla aynı)
+      const { data: vehicles } = await supabase.from('vehicles')
+        .select('id, plate, insurance_expiry, inspection_expiry')
+        .eq('user_id', user.id)
+      let vehicleAlertCount = 0
+      const today = new Date()
+      for (const v of vehicles || []) {
+        if (v.insurance_expiry) {
+          const days = Math.ceil((new Date(v.insurance_expiry).getTime() - today.getTime()) / 86400000)
+          if (days <= 15) vehicleAlertCount++
+        }
+        if (v.inspection_expiry) {
+          const days = Math.ceil((new Date(v.inspection_expiry).getTime() - today.getTime()) / 86400000)
+          if (days <= 15) vehicleAlertCount++
+        }
+      }
+
+      setUnreadCount((notifs || []).filter((n: any) => !n.is_read).length + vehicleAlertCount)
       setLoading(false)
     }
     init()

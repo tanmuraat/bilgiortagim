@@ -44,10 +44,7 @@ export function Sidebar({ unreadNotifications }: SidebarProps) {
             className="flex items-center gap-3"
             onClick={() => setOpen(false)}
           >
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#E02424] text-lg font-bold text-white">
-              B
-            </div>
-            <span className="text-base font-bold text-[#F5F5F5]">BilgiOrtağım</span>
+            <img src="/logo.png" alt="BilgiOrtağım" className="h-8 w-auto object-contain" />
           </Link>
         </div>
 

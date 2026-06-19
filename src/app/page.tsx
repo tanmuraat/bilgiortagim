@@ -34,7 +34,7 @@ export default async function LandingPage() {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-[#0A0A0A]/90 backdrop-blur-md border-b border-[#2A2A2A]">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center font-bold text-sm">B</div>
+            <img src="/logo.png" alt="BilgiOrtağım" className="h-8 w-auto object-contain" />
             <span className="font-bold text-lg">BilgiOrtağım</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm text-gray-400">
@@ -220,15 +220,22 @@ export default async function LandingPage() {
 
       {/* FOOTER */}
       <footer className="border-t border-[#2A2A2A] py-8 px-6">
-        <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-red-600 rounded flex items-center justify-center font-bold text-xs">B</div>
-            <span className="text-gray-400 text-sm">BilgiOrtağım © {new Date().getFullYear()}</span>
+        <div className="max-w-6xl mx-auto space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div className="flex items-center gap-2">
+              <img src="/logo.png" alt="BilgiOrtağım" className="h-6 w-auto object-contain" />
+              <span className="text-gray-400 text-sm">BilgiOrtağım © {new Date().getFullYear()}</span>
+            </div>
+            <div className="flex items-center gap-6 text-gray-500 text-sm">
+              <span>0850 123 45 67</span>
+              <span>info@bilgiortagim.com</span>
+              <Link href="/giris" className="hover:text-white transition-colors">Giriş Yap</Link>
+            </div>
           </div>
-          <div className="flex items-center gap-6 text-gray-500 text-sm">
-            <span>0850 123 45 67</span>
-            <span>info@bilgiortagim.com</span>
-            <Link href="/giris" className="hover:text-white transition-colors">Giriş Yap</Link>
+          <div className="flex items-center justify-center gap-6 text-gray-600 text-xs pt-4 border-t border-[#2A2A2A]/50">
+            <Link href="/kvkk" className="hover:text-gray-300 transition-colors">KVKK Aydınlatma Metni</Link>
+            <span className="text-gray-700">·</span>
+            <Link href="/sozlesme" className="hover:text-gray-300 transition-colors">Üyelik Sözleşmesi</Link>
           </div>
         </div>
       </footer>

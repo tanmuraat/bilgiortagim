@@ -7,6 +7,10 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
   title: 'BilgiOrtağım — Rent A Car Yönetim Platformu',
   description: 'Müşteri sorgulama, kiralama takibi ve muhasebe yönetimi',
+  icons: {
+    icon: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

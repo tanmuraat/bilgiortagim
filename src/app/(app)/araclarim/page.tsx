@@ -197,7 +197,6 @@ export default function AraclarimPage() {
   const statusConfig: Record<string, any> = {
     available: { label: 'Müsait', color: 'text-green-400', bg: 'bg-green-400/10' },
     rented: { label: 'Kirada', color: 'text-blue-400', bg: 'bg-blue-400/10' },
-    maintenance: { label: 'Bakımda', color: 'text-yellow-400', bg: 'bg-yellow-400/10' },
   }
 
   const isExpiringSoon = (date: string) => {
@@ -292,7 +291,7 @@ export default function AraclarimPage() {
           { label: 'Toplam Araç', value: vehicles.length, color: 'text-white' },
           { label: 'Kirada', value: vehicles.filter(v => v.status === 'rented').length, color: 'text-blue-400' },
           { label: 'Müsait', value: vehicles.filter(v => v.status === 'available').length, color: 'text-green-400' },
-          { label: 'Bakımda', value: vehicles.filter(v => v.status === 'maintenance').length, color: 'text-yellow-400' },
+          
         ].map((s, i) => (
           <div key={i} className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-4">
             <div className="text-gray-400 text-sm mb-2">{s.label}</div>

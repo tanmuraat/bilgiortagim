@@ -16,7 +16,11 @@ export default function AyarlarPage() {
   const [changingPassword, setChangingPassword] = useState(false)
   const [passwordForm, setPasswordForm] = useState({ new: '', confirm: '' })
   const [passwordMsg, setPasswordMsg] = useState('')
-  const [form, setForm] = useState({ full_name: '', company_name: '', phone: '' })
+  const [form, setForm] = useState({
+    full_name: '', company_name: '', phone: '',
+    tc_number_encrypted: '', birth_date: '', tax_number: '', tax_office: '',
+    city: '', district: '', website: '', fleet_size: '',
+  })
   const [autoRenew, setAutoRenew] = useState(false)
 
   useEffect(() => {
@@ -26,7 +30,12 @@ export default function AyarlarPage() {
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       if (p) {
         setProfile(p)
-        setForm({ full_name: p.full_name || '', company_name: p.company_name || '', phone: p.phone || '' })
+        setForm({
+          full_name: p.full_name || '', company_name: p.company_name || '', phone: p.phone || '',
+          tc_number_encrypted: p.tc_number_encrypted || '', birth_date: p.birth_date || '',
+          tax_number: p.tax_number || '', tax_office: p.tax_office || '',
+          city: p.city || '', district: p.district || '', website: p.website || '', fleet_size: p.fleet_size || '',
+        })
         setAutoRenew(p.auto_renew || false)
       }
       setLoading(false)
@@ -40,7 +49,10 @@ export default function AyarlarPage() {
     if (!user) return
     await supabase.from('profiles').update({
       full_name: form.full_name, company_name: form.company_name,
-      phone: form.phone, updated_at: new Date().toISOString(),
+      phone: form.phone, tc_number_encrypted: form.tc_number_encrypted,
+      birth_date: form.birth_date || null, tax_number: form.tax_number, tax_office: form.tax_office,
+      city: form.city, district: form.district, website: form.website || null, fleet_size: form.fleet_size || null,
+      updated_at: new Date().toISOString(),
     }).eq('id', user.id)
     setSaved(true)
     setTimeout(() => setSaved(false), 3000)
@@ -144,7 +156,7 @@ export default function AyarlarPage() {
 
       {/* Profil Bilgileri */}
       <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-5">
-        <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><User size={16} /> Profil Bilgileri</h3>
+        <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><User size={16} /> Yetkili Bilgileri</h3>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -152,17 +164,74 @@ export default function AyarlarPage() {
               <input value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} placeholder="Ad Soyad" className={inputCls} />
             </div>
             <div>
-              <label className="text-gray-400 text-xs mb-1.5 block">Firma Adı</label>
-              <input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Firma Adı" className={inputCls} />
+              <label className="text-gray-400 text-xs mb-1.5 block">TC Kimlik No</label>
+              <input value={form.tc_number_encrypted} maxLength={11} inputMode="numeric"
+                onChange={e => setForm(f => ({ ...f, tc_number_encrypted: e.target.value.replace(/\D/g, '').slice(0, 11) }))}
+                placeholder="12345678901" className={inputCls} />
             </div>
           </div>
-          <div>
-            <label className="text-gray-400 text-xs mb-1.5 block">Telefon</label>
-            <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+90 5XX XXX XX XX" className={inputCls} />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Doğum Tarihi</label>
+              <input type="date" value={form.birth_date} onChange={e => setForm(f => ({ ...f, birth_date: e.target.value }))} className={inputCls} />
+            </div>
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Telefon</label>
+              <input value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+90 5XX XXX XX XX" className={inputCls} />
+            </div>
           </div>
           <div>
             <label className="text-gray-400 text-xs mb-1.5 block">E-posta (değiştirilemez)</label>
             <input value={profile?.email || ''} disabled className={inputCls + ' opacity-50 cursor-not-allowed'} />
+          </div>
+        </div>
+      </div>
+
+      {/* Firma Bilgileri */}
+      <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-5">
+        <h3 className="text-white font-semibold mb-4 flex items-center gap-2"><CreditCard size={16} /> Firma Bilgileri</h3>
+        <div className="space-y-4">
+          <div>
+            <label className="text-gray-400 text-xs mb-1.5 block">Firma Adı</label>
+            <input value={form.company_name} onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))} placeholder="Firma Adı" className={inputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Vergi Numarası</label>
+              <input value={form.tax_number} onChange={e => setForm(f => ({ ...f, tax_number: e.target.value }))} placeholder="1234567890" className={inputCls} />
+            </div>
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Vergi Dairesi</label>
+              <input value={form.tax_office} onChange={e => setForm(f => ({ ...f, tax_office: e.target.value }))} placeholder="Vergi Dairesi" className={inputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">İl</label>
+              <input value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} placeholder="İl" className={inputCls} />
+            </div>
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">İlçe</label>
+              <input value={form.district} onChange={e => setForm(f => ({ ...f, district: e.target.value }))} placeholder="İlçe" className={inputCls} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Web Sitesi / Sosyal Medya</label>
+              <input value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://firmaniz.com" className={inputCls} />
+            </div>
+            <div>
+              <label className="text-gray-400 text-xs mb-1.5 block">Filo Büyüklüğü</label>
+              <select value={form.fleet_size} onChange={e => setForm(f => ({ ...f, fleet_size: e.target.value }))} className={inputCls}>
+                <option value="">Seçin</option>
+                <option value="1-5 araç">1-5 araç</option>
+                <option value="6-10 araç">6-10 araç</option>
+                <option value="11-20 araç">11-20 araç</option>
+                <option value="21-50 araç">21-50 araç</option>
+                <option value="51-100 araç">51-100 araç</option>
+                <option value="100+ araç">100+ araç</option>
+              </select>
+            </div>
           </div>
           <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">

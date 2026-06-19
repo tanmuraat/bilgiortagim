@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { Bell, Send, CheckCircle } from 'lucide-react'
+import { Bell, Send, CheckCircle, Trash2, AlertTriangle } from 'lucide-react'
 import { format } from 'date-fns'
 import { tr } from 'date-fns/locale'
 
@@ -20,8 +20,9 @@ export default function BildirimGonderPage() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [sent, setSent] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [form, setForm] = useState({
-    target: 'all', // all | specific
+    target: 'all',
     user_id: '',
     title: '',
     message: '',
@@ -30,8 +31,12 @@ export default function BildirimGonderPage() {
 
   const fetchData = useCallback(async () => {
     const [usersRes, notifsRes] = await Promise.all([
-      supabase.from('profiles').select('id, full_name, company_name, email').eq('role', 'user').eq('status', 'approved').order('company_name'),
-      supabase.from('notifications').select('*, profiles!notifications_user_id_fkey(company_name)').order('created_at', { ascending: false }).limit(10),
+      supabase.from('profiles').select('id, full_name, company_name, email')
+        .eq('role', 'user').eq('status', 'approved').order('company_name'),
+      supabase.from('notifications')
+        .select('*, profiles!notifications_user_id_fkey(company_name)')
+        .order('created_at', { ascending: false })
+        .limit(50),
     ])
     setUsers(usersRes.data || [])
     setSentNotifs(notifsRes.data || [])
@@ -52,22 +57,24 @@ export default function BildirimGonderPage() {
       message: form.message,
       type: form.type,
       created_by: user?.id,
+      user_id: form.target === 'specific' ? form.user_id : null,
     }
 
-    if (form.target === 'specific') {
-      payload.user_id = form.user_id
-      await supabase.from('notifications').insert(payload)
-    } else {
-      // Herkese gönder: null user_id (herkese görünsün) veya tüm kullanıcılara tek tek
-      payload.user_id = null
-      await supabase.from('notifications').insert(payload)
-    }
+    await supabase.from('notifications').insert(payload)
 
     setSent(true)
     setForm({ target: 'all', user_id: '', title: '', message: '', type: 'info' })
     setTimeout(() => setSent(false), 3000)
     fetchData()
     setSending(false)
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('Bu bildirimi silmek istediğinize emin misiniz?')) return
+    setDeletingId(id)
+    await supabase.from('notifications').delete().eq('id', id)
+    setSentNotifs(prev => prev.filter(n => n.id !== id))
+    setDeletingId(null)
   }
 
   const typeConfig = (type: string) => NOTIFICATION_TYPES.find(t => t.value === type) || NOTIFICATION_TYPES[0]
@@ -93,7 +100,6 @@ export default function BildirimGonderPage() {
         <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-5 space-y-4">
           <h3 className="text-white font-semibold">Yeni Bildirim</h3>
 
-          {/* Hedef */}
           <div>
             <label className="text-gray-400 text-sm mb-2 block">Hedef Kitle</label>
             <div className="grid grid-cols-2 gap-2">
@@ -106,7 +112,6 @@ export default function BildirimGonderPage() {
             </div>
           </div>
 
-          {/* Kullanıcı seç */}
           {form.target === 'specific' && (
             <div>
               <label className="text-gray-400 text-sm mb-1.5 block">Kullanıcı Seç *</label>
@@ -118,7 +123,6 @@ export default function BildirimGonderPage() {
             </div>
           )}
 
-          {/* Tip */}
           <div>
             <label className="text-gray-400 text-sm mb-2 block">Bildirim Tipi</label>
             <div className="grid grid-cols-4 gap-2">
@@ -131,7 +135,6 @@ export default function BildirimGonderPage() {
             </div>
           </div>
 
-          {/* Başlık */}
           <div>
             <label className="text-gray-400 text-sm mb-1.5 block">Başlık *</label>
             <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
@@ -139,7 +142,6 @@ export default function BildirimGonderPage() {
               className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2.5 text-sm focus:border-red-500 outline-none" />
           </div>
 
-          {/* Mesaj */}
           <div>
             <label className="text-gray-400 text-sm mb-1.5 block">Mesaj *</label>
             <textarea value={form.message} onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
@@ -147,7 +149,6 @@ export default function BildirimGonderPage() {
               className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2.5 text-sm focus:border-red-500 outline-none resize-none" />
           </div>
 
-          {/* Preview */}
           {form.title && (
             <div className={`rounded-lg p-3 border ${typeConfig(form.type).bg} ${typeConfig(form.type).border}`}>
               <div className={`text-sm font-semibold mb-1 ${typeConfig(form.type).color}`}>{form.title}</div>
@@ -161,28 +162,48 @@ export default function BildirimGonderPage() {
           </button>
         </div>
 
-        {/* Son Gönderilen Bildirimler */}
-        <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl">
-          <div className="p-5 border-b border-[#2A2A2A]">
-            <h3 className="text-white font-semibold">Son Gönderilen Bildirimler</h3>
+        {/* Gönderilen Bildirimler */}
+        <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl flex flex-col">
+          <div className="p-5 border-b border-[#2A2A2A] flex items-center justify-between">
+            <h3 className="text-white font-semibold">Gönderilen Bildirimler</h3>
+            <span className="text-gray-500 text-xs">{sentNotifs.length} kayıt</span>
           </div>
-          <div className="divide-y divide-[#1A1A1A]">
+          <div className="divide-y divide-[#1A1A1A] overflow-y-auto max-h-[600px]">
             {sentNotifs.length === 0 ? (
               <div className="p-8 text-center text-gray-500 text-sm">Henüz bildirim gönderilmedi</div>
             ) : sentNotifs.map(n => {
               const tc = typeConfig(n.type)
+              const isVehicleAlert = n.source_type === 'insurance' || n.source_type === 'inspection'
               return (
-                <div key={n.id} className="p-4">
-                  <div className="flex items-start gap-3">
-                    <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${tc.color.replace('text-', 'bg-')}`} />
-                    <div className="flex-1 min-w-0">
+                <div key={n.id} className="p-4 flex items-start gap-3 group hover:bg-[#1A1A1A] transition-colors">
+                  <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${tc.color.replace('text-', 'bg-')}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-start justify-between gap-2">
                       <div className="text-white text-sm font-medium truncate">{n.title}</div>
-                      <div className="text-gray-400 text-xs mt-0.5 line-clamp-2">{n.message}</div>
-                      <div className="flex items-center gap-2 mt-1.5">
-                        <span className="text-gray-600 text-[10px]">{format(new Date(n.created_at), 'dd MMM HH:mm', { locale: tr })}</span>
-                        <span className="text-gray-600 text-[10px]">·</span>
-                        <span className="text-gray-500 text-[10px]">{n.user_id ? (n.profiles?.company_name || 'Belirli kullanıcı') : 'Tüm kullanıcılar'}</span>
-                      </div>
+                      {/* Sadece admin bildirimleri silinebilir (araç uyarıları değil) */}
+                      {!isVehicleAlert && (
+                        <button
+                          onClick={() => handleDelete(n.id)}
+                          disabled={deletingId === n.id}
+                          title="Bildirimi sil"
+                          className="flex-shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded text-gray-600 hover:text-red-400 hover:bg-red-400/10 transition-all disabled:opacity-50"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                      {isVehicleAlert && (
+                        <span className="flex-shrink-0 text-[10px] text-amber-400 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded">
+                          Araç Uyarısı
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-gray-400 text-xs mt-0.5 line-clamp-2">{n.message}</div>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className="text-gray-600 text-[10px]">{format(new Date(n.created_at), 'dd MMM HH:mm', { locale: tr })}</span>
+                      <span className="text-gray-600 text-[10px]">·</span>
+                      <span className="text-gray-500 text-[10px]">
+                        {n.user_id ? (n.profiles?.company_name || 'Belirli kullanıcı') : 'Tüm kullanıcılar'}
+                      </span>
                     </div>
                   </div>
                 </div>
