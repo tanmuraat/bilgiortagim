@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { tr } from 'date-fns/locale'
 import { Search, Shield, AlertTriangle, CheckCircle, Plus, X, Upload, FileText, Eye, Car, Trash2, Download } from 'lucide-react'
 import { toProxyUrl, downloadFile } from '@/lib/file-url'
+import { DatePicker } from '@/components/ui/date-picker'
 
 function maskTC(tc: string) {
   if (!tc || tc.length < 4) return '***'
@@ -66,6 +67,15 @@ export default function MusteriSorgulamaPage() {
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       setProfile(p)
 
+      // Personelse plan/limit bilgisi ana firmadan okunmalı (personelin kendi
+      // profilindeki subscription_plan, personel oluşturulduğu andaki bir
+      // kopyadır ve ana firma plan değiştirdiğinde güncellenmeyebilir).
+      let effectivePlan = p?.subscription_plan
+      if (p?.is_sub_user && p?.parent_user_id) {
+        const { data: parentP } = await supabase.from('profiles').select('subscription_plan').eq('id', p.parent_user_id).single()
+        effectivePlan = parentP?.subscription_plan || effectivePlan
+      }
+
       // Türkiye saatine göre "bugün" aralığını hesapla (UTC+3)
       const now = new Date()
       const trOffset = 3 * 60 // dakika
@@ -77,20 +87,35 @@ export default function MusteriSorgulamaPage() {
       const todayEndUTC = new Date(todayEndTR.getTime() - trOffset * 60000).toISOString()
 
       const { count } = await supabase.from('query_logs').select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id).gte('queried_at', todayStartUTC).lte('queried_at', todayEndUTC)
+        .gte('queried_at', todayStartUTC).lte('queried_at', todayEndUTC)
       setTodayQueries(count || 0)
 
       // Araç bazlı günlük sorgu limiti hesapla (pro/premium plana göre)
-      if (p?.subscription_plan === 'pro' || p?.subscription_plan === 'premium') {
-        const { count: vehicleCount } = await supabase.from('vehicles').select('*', { count: 'exact', head: true }).eq('user_id', user.id)
+      // NOT: .eq('user_id', user.id) KULLANILMIYOR — personel giriş yaptığında
+      // user.id kendi id'si olur ama RLS sayesinde gerçek sorgu (filtresiz)
+      // otomatik olarak ana firmanın (veya şubenin kendi) araçlarını getirir.
+      if (effectivePlan === 'pro' || effectivePlan === 'premium') {
+        const { count: vehicleCount } = await supabase.from('vehicles').select('*', { count: 'exact', head: true })
         const { data: settings } = await supabase.from('system_settings').select('value').eq('key', 'query_limits').maybeSingle()
-        const planLimits = settings?.value?.[p.subscription_plan] || { per_vehicle: 1, min_limit: 5 }
+        const planLimits = settings?.value?.[effectivePlan] || { per_vehicle: 1, min_limit: 5 }
         const calculatedLimit = Math.max((vehicleCount || 0) * planLimits.per_vehicle, planLimits.min_limit)
         setDailyLimit(calculatedLimit)
       }
-      const { count: total } = await supabase.from('query_logs').select('*', { count: 'exact', head: true }).eq('user_id', user.id)
-      const { count: risky } = await supabase.from('customer_records').select('*', { count: 'exact', head: true }).eq('risk_level', 'risky')
-      setStats({ total: total || 0, risky: risky || 0, clear: (total || 0) - (risky || 0) })
+      const { count: total } = await supabase.from('query_logs').select('*', { count: 'exact', head: true })
+
+      // Kullanıcının sorguladığı müşterilerden kaçı riskli — kendi query_logs'undaki
+      // tekil tc_hash'leri al, customer_records'ta risk_level kontrolü yap.
+      const { data: queriedLogs } = await supabase.from('query_logs').select('tc_hash')
+      const uniqueTcHashes = Array.from(new Set((queriedLogs || []).map(l => l.tc_hash).filter(Boolean)))
+      let riskyCount = 0
+      if (uniqueTcHashes.length > 0) {
+        const { count: risky } = await supabase.from('customer_records')
+          .select('*', { count: 'exact', head: true })
+          .in('tc_hash', uniqueTcHashes)
+          .eq('risk_level', 'risky')
+        riskyCount = risky || 0
+      }
+      setStats({ total: total || 0, risky: riskyCount, clear: (total || 0) - riskyCount })
     }
     init()
   }, [supabase])
@@ -107,21 +132,25 @@ export default function MusteriSorgulamaPage() {
 
     // Kiralama kayıtlarını getir (customer_records.tc_hash ile rentals tablosundan)
     const { data: rentals } = await supabase.from('rentals')
-      .select('*, vehicles(plate, brand, model), profiles(company_name)')
+      .select('*, vehicles(plate, brand, model), profiles!rentals_user_id_fkey(company_name)')
       .eq('customer_tc_hash', customer.tc_hash)
       .order('start_date', { ascending: false })
     setRentalItems(rentals || [])
 
     // Sorgu logu ekle
-    await supabase.from('query_logs').insert({
+    const { error: logError } = await supabase.from('query_logs').insert({
       user_id: userId,
       tc_hash: customer.tc_hash,
-      customer_id: customer.id,
       customer_name: customer.full_name,
       result_found: true,
       queried_at: new Date().toISOString(),
     })
-    setTodayQueries((q: number) => q + 1)
+    if (logError) {
+      console.error('Sorgu logu kaydedilemedi:', logError)
+    } else {
+      setTodayQueries((q: number) => q + 1)
+      setStats((s) => ({ ...s, total: s.total + 1, clear: s.clear + 1 }))
+    }
   }
 
   const handleQuery = async () => {
@@ -386,12 +415,7 @@ export default function MusteriSorgulamaPage() {
           </div>
 
           {/* Özet sayaçlar */}
-          <div className="grid grid-cols-4 gap-3">
-            <button type="button" onClick={() => setShowRentalsModal(true)}
-              className="bg-[#1E1E1E] hover:bg-[#252525] border border-transparent hover:border-blue-500/30 rounded-lg p-3 flex items-center justify-between transition-colors cursor-pointer">
-              <span className="text-gray-400 text-sm">Kiralama</span>
-              <span className="font-bold text-lg text-blue-400 hover:underline">{rentalItems.length}</span>
-            </button>
+          <div className="grid grid-cols-3 gap-3">
             {[
               { label: 'Toplam Yorum', value: incidents.length, color: 'text-white' },
               { label: 'Olumsuz Yorum', value: negativeIncidents.length, color: 'text-red-400' },
@@ -651,7 +675,9 @@ export default function MusteriSorgulamaPage() {
                 </div>
                 <div>
                   <label className="text-gray-400 text-xs mb-1.5 block">Olay Tarihi</label>
-                  <input type="date" value={incidentForm.incident_date} onChange={e => setIncidentForm(f => ({ ...f, incident_date: e.target.value }))} className={inputCls} />
+                  <DatePicker value={incidentForm.incident_date} onChange={d => setIncidentForm(f => ({ ...f, incident_date: d }))}
+                    maxDate={format(new Date(), 'yyyy-MM-dd')}
+                    className={inputCls + ' flex items-center justify-between gap-2 hover:border-[#3A3A3A] transition-colors'} />
                 </div>
               </div>
               <div>

@@ -29,8 +29,12 @@ export default async function OnayBekleniyorPage() {
     .eq("id", user.id)
     .single();
 
-  if (profile?.status === "active") {
+  if (profile?.status === "approved") {
     redirect("/dashboard");
+  }
+
+  if (profile?.status === "rejected" || profile?.status === "blocked") {
+    redirect("/giris");
   }
 
   return (

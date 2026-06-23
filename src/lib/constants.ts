@@ -2,7 +2,7 @@ export type SubscriptionPlan = "none" | "pro" | "premium";
 
 export type UserRole = "user" | "admin";
 
-export type UserStatus = "pending" | "active" | "suspended";
+export type UserStatus = "pending" | "approved" | "rejected" | "blocked";
 
 export const PLAN_LIMITS = {
   none: {

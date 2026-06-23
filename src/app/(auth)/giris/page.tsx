@@ -4,18 +4,22 @@ import { useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
-import { Eye, EyeOff, Shield } from 'lucide-react'
+import { Eye, EyeOff, Shield, ShieldAlert } from 'lucide-react'
 
 function GirisForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const rejected = searchParams.get('rejected')
+  const statusParam = searchParams.get('status')
   const supabase = createClient()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(
+    statusParam === 'blocked' ? 'Hesabınız askıya alınmıştır. Detaylı bilgi için destek ile iletişime geçin: 0850 123 45 67' :
+    statusParam === 'rejected' ? 'Başvurunuz reddedildi. Detaylı bilgi için destek hattını arayın: 0850 123 45 67' :
+    ''
+  )
 
   const handleLogin = async () => {
     if (!email || !password) { setError('Email ve şifre zorunludur.'); return }
@@ -36,7 +40,10 @@ function GirisForm() {
       } else if (profile?.status === 'pending') {
         router.push('/onay-bekleniyor')
       } else if (profile?.status === 'rejected') {
-        setError('Başvurunuz reddedildi. Destek hattını arayın: 0850 123 45 67')
+        setError('Başvurunuz reddedildi. Detaylı bilgi için destek hattını arayın: 0850 123 45 67')
+        await supabase.auth.signOut()
+      } else if (profile?.status === 'blocked') {
+        setError('Hesabınız askıya alınmıştır. Detaylı bilgi için destek ile iletişime geçin: 0850 123 45 67')
         await supabase.auth.signOut()
       } else {
         router.push('/dashboard')
@@ -63,14 +70,11 @@ function GirisForm() {
             <p className="text-gray-500 text-sm mt-1">Hesabınıza erişin</p>
           </div>
 
-          {rejected && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-red-400 text-sm">
-              Başvurunuz reddedildi. Detay için destek hattını arayın.
-            </div>
-          )}
-
           {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-red-400 text-sm">{error}</div>
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3 text-red-400 text-sm flex items-start gap-2.5">
+              <ShieldAlert size={16} className="flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
           )}
 
           <div className="space-y-4">

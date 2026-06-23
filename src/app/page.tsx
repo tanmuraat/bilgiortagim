@@ -40,7 +40,7 @@ export default async function LandingPage() {
           <div className="hidden md:flex items-center gap-8 text-sm text-gray-400">
             <a href="#ozellikler" className="hover:text-white transition-colors">Özellikler</a>
             <a href="#fiyatlar" className="hover:text-white transition-colors">Fiyatlar</a>
-            <a href="#hakkimizda" className="hover:text-white transition-colors">Hakkımızda</a>
+            <a href="/hakkimizda" className="hover:text-white transition-colors">Hakkımızda</a>
           </div>
           <div className="flex items-center gap-3">
             <Link href="/giris" className="text-gray-400 hover:text-white text-sm transition-colors">Giriş Yap</Link>

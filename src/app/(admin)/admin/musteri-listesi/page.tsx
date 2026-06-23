@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { format } from 'date-fns'
 import { tr } from 'date-fns/locale'
-import { Search, Users, AlertTriangle, CheckCircle, Shield, X, Eye, FileText, Car, Phone, User, Building } from 'lucide-react'
+import { Search, Users, AlertTriangle, CheckCircle, Shield, X, Eye, FileText, Car, Phone, User, Building, Edit2, Trash2 } from 'lucide-react'
 import { toProxyUrl } from '@/lib/file-url'
+import { DatePicker } from '@/components/ui/date-picker'
 
 export default function AdminMusteriListesiPage() {
   const supabase = createClient()
@@ -20,6 +21,12 @@ export default function AdminMusteriListesiPage() {
   const [showModal, setShowModal] = useState(false)
   const [stats, setStats] = useState({ total: 0, risky: 0, clear: 0, totalQueries: 0 })
   const [viewingDoc, setViewingDoc] = useState<string | null>(null)
+
+  const [editMode, setEditMode] = useState(false)
+  const [editForm, setEditForm] = useState<any>({})
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -56,13 +63,73 @@ export default function AdminMusteriListesiPage() {
     setSelectedCustomer(customer)
     setShowModal(true)
     setViewingDoc(null)
+    setEditMode(false)
+    setConfirmDelete(false)
     const [incRes, rentalRes] = await Promise.all([
       supabase.from('customer_incidents').select('*').eq('customer_id', customer.id).order('incident_date', { ascending: false }),
-      supabase.from('rentals').select('*, vehicles(plate, brand, model), profiles(company_name)')
+      supabase.from('rentals').select('*, vehicles(plate, brand, model), profiles!rentals_user_id_fkey(company_name)')
         .eq('customer_tc_hash', customer.tc_hash).order('start_date', { ascending: false }),
     ])
     setIncidents(incRes.data || [])
     setRentals(rentalRes.data || [])
+  }
+
+  const startEdit = () => {
+    setEditForm({
+      full_name: selectedCustomer.full_name || '',
+      phone_encrypted: selectedCustomer.phone_encrypted || '',
+      address: selectedCustomer.address || '',
+      birth_date: selectedCustomer.birth_date || '',
+      rental_count: selectedCustomer.rental_count || 0,
+      total_outstanding: selectedCustomer.total_outstanding || 0,
+      last_rental_company: selectedCustomer.last_rental_company || '',
+      last_rental_date: selectedCustomer.last_rental_date || '',
+    })
+    setEditMode(true)
+  }
+
+  const handleSaveEdit = async () => {
+    setSavingEdit(true)
+    const { error } = await supabase.from('customer_records').update({
+      full_name: editForm.full_name,
+      phone_encrypted: editForm.phone_encrypted,
+      address: editForm.address,
+      birth_date: editForm.birth_date || null,
+      rental_count: Number(editForm.rental_count) || 0,
+      total_outstanding: Number(editForm.total_outstanding) || 0,
+      last_rental_company: editForm.last_rental_company,
+      last_rental_date: editForm.last_rental_date || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', selectedCustomer.id)
+
+    if (error) {
+      alert('Kaydedilemedi: ' + error.message)
+      setSavingEdit(false)
+      return
+    }
+
+    setSelectedCustomer((prev: any) => ({ ...prev, ...editForm }))
+    setEditMode(false)
+    setSavingEdit(false)
+    fetchData()
+  }
+
+  const handleDeleteCustomer = async () => {
+    setDeleting(true)
+    // İlişkili yorumları önce sil (FK cascade olmayabilir, güvenli olalım)
+    await supabase.from('customer_incidents').delete().eq('customer_id', selectedCustomer.id)
+    const { error } = await supabase.from('customer_records').delete().eq('id', selectedCustomer.id)
+
+    if (error) {
+      alert('Müşteri silinemedi: ' + error.message)
+      setDeleting(false)
+      return
+    }
+
+    setShowModal(false)
+    setConfirmDelete(false)
+    setDeleting(false)
+    fetchData()
   }
 
   const handleRiskChange = async (customerId: string, newRisk: string) => {
@@ -136,7 +203,7 @@ export default function AdminMusteriListesiPage() {
         <table className="w-full">
           <thead>
             <tr className="border-b border-[#2A2A2A]">
-              {['Ad Soyad', 'TC Kimlik No', 'Telefon', 'Risk', 'Kiralama', 'Olumsuz', 'Son Kiralama Firma', 'Kayıt', ''].map(h => (
+              {['Ad Soyad', 'TC Kimlik No', 'Telefon', 'Risk', 'Kiralama', 'Borç', 'Son Kiralama Firma', 'Kayıt', ''].map(h => (
                 <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-4 py-3">{h}</th>
               ))}
             </tr>
@@ -158,9 +225,11 @@ export default function AdminMusteriListesiPage() {
                   </td>
                   <td className="px-4 py-3 text-gray-400 text-sm">{c.rental_count || 0}</td>
                   <td className="px-4 py-3">
-                    <span className={`text-sm font-bold ${(c.negative_records || 0) > 0 ? 'text-red-400' : 'text-gray-500'}`}>{c.negative_records || 0}</span>
+                    <span className={`text-sm font-bold ${(c.total_outstanding || 0) > 0 ? 'text-red-400' : 'text-gray-500'}`}>
+                      {(c.total_outstanding || 0) > 0 ? `₺${Number(c.total_outstanding).toLocaleString('tr-TR')}` : '—'}
+                    </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-400 text-sm truncate max-w-[120px]">{c.last_company_name || '—'}</td>
+                  <td className="px-4 py-3 text-gray-400 text-sm truncate max-w-[120px]">{c.last_rental_company || '—'}</td>
                   <td className="px-4 py-3 text-gray-500 text-xs">{format(new Date(c.created_at), 'dd MMM yy', { locale: tr })}</td>
                   <td className="px-4 py-3">
                     <button onClick={() => openDetail(c)} className="flex items-center gap-1.5 text-gray-400 hover:text-white text-xs border border-[#2A2A2A] hover:border-[#3A3A3A] px-2 py-1 rounded-lg transition-colors">
@@ -191,20 +260,100 @@ export default function AdminMusteriListesiPage() {
                   })()}
                 </div>
               </div>
-              <button onClick={() => { setShowModal(false); setViewingDoc(null) }} className="text-gray-400 hover:text-white"><X size={20} /></button>
+              <div className="flex items-center gap-2">
+                {!editMode && !confirmDelete && (
+                  <>
+                    <button onClick={startEdit} className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 text-xs border border-blue-400/30 px-2.5 py-1.5 rounded-lg transition-colors">
+                      <Edit2 size={12} /> Düzenle
+                    </button>
+                    <button onClick={() => setConfirmDelete(true)} className="flex items-center gap-1.5 text-red-400 hover:text-red-300 text-xs border border-red-400/30 px-2.5 py-1.5 rounded-lg transition-colors">
+                      <Trash2 size={12} /> Sil
+                    </button>
+                  </>
+                )}
+                <button onClick={() => { setShowModal(false); setViewingDoc(null); setEditMode(false); setConfirmDelete(false) }} className="text-gray-400 hover:text-white"><X size={20} /></button>
+              </div>
             </div>
+
+            {confirmDelete && (
+              <div className="p-4 bg-red-500/10 border-b border-red-500/20 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-red-300 text-sm">
+                  <AlertTriangle size={15} />
+                  Bu müşteriyi ve tüm yorumlarını kalıcı olarak silmek istediğinize emin misiniz?
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button onClick={() => setConfirmDelete(false)} className="text-xs text-gray-400 hover:text-white px-3 py-1.5 rounded-lg border border-[#2A2A2A]">Vazgeç</button>
+                  <button onClick={handleDeleteCustomer} disabled={deleting}
+                    className="text-xs text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 px-3 py-1.5 rounded-lg font-medium">
+                    {deleting ? 'Siliniyor...' : 'Evet, Sil'}
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="p-5 space-y-6">
               {/* MÜŞTERİ BİLGİLERİ */}
               <div>
                 <h3 className="text-gray-400 text-xs font-semibold uppercase tracking-wider mb-3 flex items-center gap-2"><User size={12} /> Kişisel Bilgiler</h3>
-                <div className="grid grid-cols-3 gap-3">
-                  <InfoRow icon={User} label="Ad Soyad" value={selectedCustomer.full_name} />
-                  <InfoRow icon={Shield} label="TC Kimlik No (Açık)" value={selectedCustomer.tc_encrypted} highlight="text-yellow-300 font-mono" />
-                  <InfoRow icon={Phone} label="Telefon (Açık)" value={selectedCustomer.phone_encrypted} highlight="text-blue-300" />
-                  <InfoRow icon={Car} label="Toplam Kiralama" value={`${selectedCustomer.rental_count || 0} kez`} />
-                  <InfoRow icon={Building} label="Son Kiralama Firma" value={selectedCustomer.last_company_name} />
-                  <InfoRow icon={AlertTriangle} label="Olumsuz Kayıt" value={selectedCustomer.negative_records || 0} highlight={(selectedCustomer.negative_records || 0) > 0 ? 'text-red-400 font-bold' : 'text-gray-400'} />
-                </div>
+                {!editMode ? (
+                  <div className="grid grid-cols-3 gap-3">
+                    <InfoRow icon={User} label="Ad Soyad" value={selectedCustomer.full_name} />
+                    <InfoRow icon={Shield} label="TC Kimlik No (Açık)" value={selectedCustomer.tc_encrypted} highlight="text-yellow-300 font-mono" />
+                    <InfoRow icon={Phone} label="Telefon (Açık)" value={selectedCustomer.phone_encrypted} highlight="text-blue-300" />
+                    <InfoRow icon={Car} label="Toplam Kiralama" value={`${selectedCustomer.rental_count || 0} kez`} />
+                    <InfoRow icon={Building} label="Son Kiralama Firma" value={selectedCustomer.last_rental_company} />
+                    <InfoRow icon={AlertTriangle} label="Toplam Borç" value={(selectedCustomer.total_outstanding || 0) > 0 ? `₺${Number(selectedCustomer.total_outstanding).toLocaleString('tr-TR')}` : '—'} highlight={(selectedCustomer.total_outstanding || 0) > 0 ? 'text-red-400 font-bold' : 'text-gray-400'} />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-gray-500 text-xs mb-1 block">Ad Soyad</label>
+                      <input value={editForm.full_name} onChange={e => setEditForm((f: any) => ({ ...f, full_name: e.target.value }))}
+                        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none" />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs mb-1 block">Telefon</label>
+                      <input value={editForm.phone_encrypted} onChange={e => setEditForm((f: any) => ({ ...f, phone_encrypted: e.target.value }))}
+                        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-gray-500 text-xs mb-1 block">Adres</label>
+                      <input value={editForm.address} onChange={e => setEditForm((f: any) => ({ ...f, address: e.target.value }))}
+                        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none" />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs mb-1 block">Doğum Tarihi</label>
+                      <DatePicker value={editForm.birth_date || ''} onChange={d => setEditForm((f: any) => ({ ...f, birth_date: d }))}
+                        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none flex items-center justify-between gap-2 hover:border-[#3A3A3A] transition-colors" />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs mb-1 block">Toplam Kiralama (kez)</label>
+                      <input type="number" value={editForm.rental_count} onChange={e => setEditForm((f: any) => ({ ...f, rental_count: e.target.value }))}
+                        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none" />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs mb-1 block">Toplam Borç (₺)</label>
+                      <input type="number" value={editForm.total_outstanding} onChange={e => setEditForm((f: any) => ({ ...f, total_outstanding: e.target.value }))}
+                        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none" />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs mb-1 block">Son Kiralama Firma</label>
+                      <input value={editForm.last_rental_company} onChange={e => setEditForm((f: any) => ({ ...f, last_rental_company: e.target.value }))}
+                        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none" />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 text-xs mb-1 block">Son Kiralama Tarihi</label>
+                      <DatePicker value={editForm.last_rental_date || ''} onChange={d => setEditForm((f: any) => ({ ...f, last_rental_date: d }))}
+                        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2 text-sm focus:border-red-500 outline-none flex items-center justify-between gap-2 hover:border-[#3A3A3A] transition-colors" />
+                    </div>
+                    <div className="col-span-2 flex gap-2 mt-1">
+                      <button onClick={() => setEditMode(false)} className="flex-1 text-xs text-gray-400 hover:text-white py-2 rounded-lg border border-[#2A2A2A]">Vazgeç</button>
+                      <button onClick={handleSaveEdit} disabled={savingEdit}
+                        className="flex-1 text-xs text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 py-2 rounded-lg font-medium">
+                        {savingEdit ? 'Kaydediliyor...' : 'Kaydet'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* RİSK SEVİYESİ YÖNETİMİ */}

@@ -4,35 +4,44 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { format, addMonths, addYears } from 'date-fns'
 import { tr } from 'date-fns/locale'
-import { Check, X, AlertTriangle, CreditCard, RefreshCw, Shield } from 'lucide-react'
+import { Check, X, AlertTriangle, CreditCard, RefreshCw, Shield, Users, Building2, Minus, Plus } from 'lucide-react'
 
 export default function AbonelikPage() {
   const supabase = createClient()
   const [profile, setProfile] = useState<any>(null)
   const [pricingPro, setPricingPro] = useState<any>(null)
   const [pricingPremium, setPricingPremium] = useState<any>(null)
+  const [addonPrices, setAddonPrices] = useState({ extra_personnel_price_monthly: 199, extra_branch_price_monthly: 349 })
   const [billing, setBilling] = useState<'monthly' | 'yearly'>('monthly')
   const [loading, setLoading] = useState(true)
   const [processing, setProcessing] = useState<string | null>(null)
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const [extraPersonnel, setExtraPersonnel] = useState(0)
+  const [extraBranches, setExtraBranches] = useState(0)
 
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
-      const [profileRes, proRes, premiumRes] = await Promise.all([
+      const [profileRes, proRes, premiumRes, addonRes] = await Promise.all([
         supabase.from('profiles').select('*').eq('id', user.id).single(),
         supabase.from('landing_content').select('value').eq('section', 'pricing').eq('key', 'pro').single(),
         supabase.from('landing_content').select('value').eq('section', 'pricing').eq('key', 'premium').single(),
+        supabase.from('system_settings').select('value').eq('key', 'subscription_addons').single(),
       ])
       setProfile(profileRes.data)
       setPricingPro(proRes.data?.value || { name: 'Pro', price_monthly: 299, price_yearly: 2990, features: [] })
       setPricingPremium(premiumRes.data?.value || { name: 'Premium', price_monthly: 599, price_yearly: 5990, features: [] })
+      if (addonRes.data?.value) setAddonPrices(addonRes.data.value)
+      setExtraPersonnel(profileRes.data?.extra_personnel_slots || 0)
+      setExtraBranches(profileRes.data?.extra_branch_slots || 0)
       setLoading(false)
     }
     init()
   }, [supabase])
+
+  const calcAddonMonthly = () => extraPersonnel * addonPrices.extra_personnel_price_monthly + extraBranches * addonPrices.extra_branch_price_monthly
 
   const handleSelectPlan = async (planKey: string) => {
     setProcessing(planKey)
@@ -43,13 +52,22 @@ export default function AbonelikPage() {
     const now = new Date()
     const end = billing === 'yearly' ? addYears(now, 1) : addMonths(now, 1)
     const months = billing === 'yearly' ? 12 : 1
-    const price = billing === 'yearly' ? pricing?.price_yearly : pricing?.price_monthly
+    const basePrice = billing === 'yearly' ? pricing?.price_yearly : pricing?.price_monthly
+
+    // Pro planda eklenti satılmaz; Premium'da seçilen ekstra personel/şube fiyata eklenir
+    const addonMonthly = planKey === 'premium' ? calcAddonMonthly() : 0
+    const addonTotal = billing === 'yearly' ? addonMonthly * 12 : addonMonthly
+    const price = (basePrice || 0) + addonTotal
+    const finalExtraPersonnel = planKey === 'premium' ? extraPersonnel : 0
+    const finalExtraBranches = planKey === 'premium' ? extraBranches : 0
 
     await supabase.from('profiles').update({
       subscription_plan: planKey,
       subscription_start: format(now, 'yyyy-MM-dd'),
       subscription_end: format(end, 'yyyy-MM-dd'),
       sub_warning_sent: false,
+      extra_personnel_slots: finalExtraPersonnel,
+      extra_branch_slots: finalExtraBranches,
     }).eq('id', user.id)
 
     await supabase.from('subscriptions').insert({
@@ -153,7 +171,8 @@ export default function AbonelikPage() {
         {PLANS.map(plan => {
           const isCurrent = currentPlan === plan.key
           const price = billing === 'yearly' ? plan.data?.price_yearly : plan.data?.price_monthly
-          const perMonth = billing === 'yearly' ? Math.round((plan.data?.price_yearly || 0) / 12) : (plan.data?.price_monthly || 0)
+          const addonMonthly = plan.key === 'premium' ? calcAddonMonthly() : 0
+          const perMonth = (billing === 'yearly' ? Math.round((plan.data?.price_yearly || 0) / 12) : (plan.data?.price_monthly || 0)) + addonMonthly
           const features: string[] = plan.data?.features || []
 
           return (
@@ -169,7 +188,7 @@ export default function AbonelikPage() {
                 ₺{perMonth.toLocaleString('tr-TR')}<span className="text-lg text-gray-400 font-normal">/ay</span>
               </div>
               {billing === 'yearly' && (
-                <div className="text-gray-500 text-sm mb-4">Yıllık ₺{(plan.data?.price_yearly || 0).toLocaleString('tr-TR')} faturalandırılır</div>
+                <div className="text-gray-500 text-sm mb-4">Yıllık ₺{((plan.data?.price_yearly || 0) + addonMonthly * 12).toLocaleString('tr-TR')} faturalandırılır</div>
               )}
               <ul className="space-y-2.5 my-5">
                 {features.map((f: string, i: number) => (
@@ -177,12 +196,56 @@ export default function AbonelikPage() {
                     <Check size={14} className="text-green-400 flex-shrink-0" /> {f}
                   </li>
                 ))}
+                <li className="flex items-center gap-2.5 text-gray-300 text-sm">
+                  <Check size={14} className="text-green-400 flex-shrink-0" /> {plan.key === 'premium' ? '1 personel + 2 şube dahil' : 'Personel ve şube özelliği yok'}
+                </li>
               </ul>
+
+              {plan.key === 'premium' && (
+                <div className="bg-[#1E1E1E] border border-[#2A2A2A] rounded-xl p-3.5 mb-5 space-y-3">
+                  <div className="text-gray-400 text-xs font-medium uppercase tracking-wider">Ekstra İhtiyaçlarınız (opsiyonel)</div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm text-gray-300"><Users size={14} className="text-blue-400" /> Ekstra Personel</div>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setExtraPersonnel(n => Math.max(0, n - 1))}
+                        className="w-6 h-6 rounded-md bg-[#2A2A2A] hover:bg-[#333] text-gray-300 flex items-center justify-center transition-colors"><Minus size={11} /></button>
+                      <span className="text-white text-sm w-4 text-center">{extraPersonnel}</span>
+                      <button type="button" onClick={() => setExtraPersonnel(n => n + 1)}
+                        className="w-6 h-6 rounded-md bg-[#2A2A2A] hover:bg-[#333] text-gray-300 flex items-center justify-center transition-colors"><Plus size={11} /></button>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm text-gray-300"><Building2 size={14} className="text-purple-400" /> Ekstra Şube</div>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => setExtraBranches(n => Math.max(0, n - 1))}
+                        className="w-6 h-6 rounded-md bg-[#2A2A2A] hover:bg-[#333] text-gray-300 flex items-center justify-center transition-colors"><Minus size={11} /></button>
+                      <span className="text-white text-sm w-4 text-center">{extraBranches}</span>
+                      <button type="button" onClick={() => setExtraBranches(n => n + 1)}
+                        className="w-6 h-6 rounded-md bg-[#2A2A2A] hover:bg-[#333] text-gray-300 flex items-center justify-center transition-colors"><Plus size={11} /></button>
+                    </div>
+                  </div>
+                  {(extraPersonnel > 0 || extraBranches > 0) && (
+                    <div className="text-gray-500 text-[11px] pt-1 border-t border-[#2A2A2A]">
+                      +₺{addonMonthly.toLocaleString('tr-TR')}/ay ek ücret
+                      {extraPersonnel > 0 && ` · ${extraPersonnel} ekstra personel`}
+                      {extraBranches > 0 && ` · ${extraBranches} ekstra şube`}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <button onClick={() => !isCurrent && handleSelectPlan(plan.key)}
                 disabled={isCurrent || processing === plan.key}
                 className={`w-full py-3 rounded-xl font-semibold text-sm transition-colors text-white ${isCurrent ? 'bg-green-600/20 border border-green-600/30 text-green-400 cursor-default' : plan.btnClass} disabled:opacity-50`}>
                 {processing === plan.key ? 'İşleniyor...' : isCurrent ? '✓ Aktif Plan' : currentPlan === 'none' ? `${plan.data?.name} ile Başla` : `${plan.data?.name} Planına Geç`}
               </button>
+
+              {isCurrent && plan.key === 'premium' && (extraPersonnel !== (profile?.extra_personnel_slots || 0) || extraBranches !== (profile?.extra_branch_slots || 0)) && (
+                <button onClick={() => handleSelectPlan(plan.key)} disabled={processing === plan.key}
+                  className="w-full mt-2 py-2.5 rounded-xl font-medium text-sm bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50">
+                  {processing === plan.key ? 'Güncelleniyor...' : 'Ekstra Hakları Güncelle'}
+                </button>
+              )}
             </div>
           )
         })}

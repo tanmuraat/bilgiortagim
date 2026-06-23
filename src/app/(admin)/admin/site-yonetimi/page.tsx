@@ -12,6 +12,7 @@ export default function SiteYonetimiPage() {
 
   const [contact, setContact] = useState({ phone: '', email: '', address: '', support_hours: '' })
   const [hero, setHero] = useState<any>({})
+  const [about, setAbout] = useState<any>({})
   const [stats, setStats] = useState<any[]>([])
   const [features, setFeatures] = useState<any[]>([])
   const [pricing, setPricing] = useState<any>({ pro: {}, premium: {} })
@@ -29,6 +30,9 @@ export default function SiteYonetimiPage() {
 
     const heroRow = get('hero', 'main')
     if (heroRow) setHero(heroRow)
+
+    const aboutRow = get('about', 'main')
+    if (aboutRow) setAbout(aboutRow)
 
     setStats(data.filter(r => r.section === 'stats').map(r => ({ key: r.key, ...r.value })))
     setFeatures(data.filter(r => r.section === 'features').map(r => ({ key: r.key, ...r.value })))
@@ -54,6 +58,7 @@ export default function SiteYonetimiPage() {
 
   const saveContact = () => saveSection('contact', 'info', contact)
   const saveHero = () => saveSection('hero', 'main', hero)
+  const saveAbout = () => saveSection('about', 'main', about)
   const savePricing = (plan: string) => saveSection('pricing', plan, pricing[plan])
 
   const saveStats = async () => {
@@ -108,6 +113,7 @@ export default function SiteYonetimiPage() {
     <button onClick={() => {
       if (sec === 'contact') saveContact()
       else if (sec === 'hero') saveHero()
+      else if (sec === 'about') saveAbout()
       else if (sec === 'stats') saveStats()
       else if (sec === 'features') saveFeatures()
       else if (sec === 'upcoming') saveUpcoming()
@@ -173,6 +179,31 @@ export default function SiteYonetimiPage() {
             </div>
             <div><label className={labelCls}>Açıklama</label><textarea className={inputCls + ' resize-none'} rows={2} value={hero.description || ''} onChange={e => setHero((h: any) => ({ ...h, description: e.target.value }))} /></div>
             <SaveBtn sec="hero" />
+          </div>
+        )}
+      </div>
+
+      {/* HAKKIMIZDA */}
+      <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl overflow-hidden">
+        <SectionHeader id="about" label="🏢 Hakkımızda Sayfası" />
+        {openSection === 'about' && (
+          <div className="p-5 border-t border-[#2A2A2A] space-y-3">
+            <div><label className={labelCls}>Başlık</label><input className={inputCls} value={about.title || ''} onChange={e => setAbout((a: any) => ({ ...a, title: e.target.value }))} placeholder="Hakkımızda" /></div>
+            <div><label className={labelCls}>Alt Başlık</label><input className={inputCls} value={about.subtitle || ''} onChange={e => setAbout((a: any) => ({ ...a, subtitle: e.target.value }))} placeholder="Rent A Car sektörünün dijital güvencesi" /></div>
+            <div><label className={labelCls}>Ana Metin (her satır bir paragraf)</label>
+              <textarea className={inputCls + ' resize-none'} rows={6}
+                value={about.body || ''} onChange={e => setAbout((a: any) => ({ ...a, body: e.target.value }))}
+                placeholder="BilgiOrtağım olarak..." />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className={labelCls}>Misyon Başlığı</label><input className={inputCls} value={about.mission_title || ''} onChange={e => setAbout((a: any) => ({ ...a, mission_title: e.target.value }))} placeholder="Misyonumuz" /></div>
+              <div><label className={labelCls}>Vizyon Başlığı</label><input className={inputCls} value={about.vision_title || ''} onChange={e => setAbout((a: any) => ({ ...a, vision_title: e.target.value }))} placeholder="Vizyonumuz" /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className={labelCls}>Misyon Metni</label><textarea className={inputCls + ' resize-none'} rows={3} value={about.mission_text || ''} onChange={e => setAbout((a: any) => ({ ...a, mission_text: e.target.value }))} /></div>
+              <div><label className={labelCls}>Vizyon Metni</label><textarea className={inputCls + ' resize-none'} rows={3} value={about.vision_text || ''} onChange={e => setAbout((a: any) => ({ ...a, vision_text: e.target.value }))} /></div>
+            </div>
+            <SaveBtn sec="about" />
           </div>
         )}
       </div>

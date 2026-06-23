@@ -27,9 +27,9 @@ export default function DashboardPage() {
 
     const [profileRes, vehiclesRes, rentalsRes, txRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', user.id).single(),
-      supabase.from('vehicles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('rentals').select('*, vehicles(plate, brand, model)').eq('user_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('transactions').select('*').eq('user_id', user.id).gte('transaction_date', monthStart).lte('transaction_date', monthEnd),
+      supabase.from('vehicles').select('*').order('created_at', { ascending: false }),
+      supabase.from('rentals').select('*, vehicles(plate, brand, model)').order('created_at', { ascending: false }),
+      supabase.from('transactions').select('*').gte('transaction_date', monthStart).lte('transaction_date', monthEnd),
     ])
 
     const vehiclesData = vehiclesRes.data || []
@@ -99,7 +99,11 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">
-            Hoş geldiniz, {profile?.company_name} 👋
+            {profile?.is_branch
+              ? `Hoş geldiniz, ${profile?.branch_name || profile?.full_name} 👋`
+              : profile?.is_sub_user
+              ? `Hoş geldiniz, ${profile?.full_name} 👋`
+              : `Hoş geldiniz, ${profile?.company_name} 👋`}
           </h1>
           <p className="text-gray-400 text-sm mt-1">İşletmenizin genel durumunu aşağıdan takip edebilirsiniz.</p>
         </div>

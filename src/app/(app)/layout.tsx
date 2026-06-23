@@ -6,9 +6,9 @@ import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import {
   LayoutDashboard, Search, Calendar, Car, Calculator,
-  BarChart2, Bell, Settings, LogOut, Menu,
+  LifeBuoy, Bell, Settings, LogOut, Menu,
   Info, AlertTriangle, CheckCircle, XCircle, X,
-  ChevronDown, Users, Plus, Edit2, Trash2, Shield, Eye, EyeOff
+  ChevronDown, Users, Plus, Edit2, Trash2, Shield, Eye, EyeOff, Building2
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { tr } from 'date-fns/locale'
@@ -19,7 +19,7 @@ const NAV = [
   { href: '/kiralama-takvimi', label: 'Kiralama Takvimi', icon: Calendar, plan: 'premium', perm: 'kiralama-takvimi' },
   { href: '/araclarim', label: 'Araçlarım', icon: Car, plan: 'pro', perm: 'araclarim' },
   { href: '/mini-muhasebe', label: 'Mini Muhasebe', icon: Calculator, plan: 'premium', perm: 'mini-muhasebe' },
-  { href: '/raporlar', label: 'Raporlar', icon: BarChart2, plan: 'premium', perm: 'raporlar' },
+  { href: '/destek', label: 'Destek', icon: LifeBuoy, plan: 'pro', perm: 'destek' },
   { href: '/bildirimler', label: 'Bildirimler', icon: Bell, plan: 'pro', perm: 'bildirimler' },
   { href: '/ayarlar', label: 'Ayarlar', icon: Settings, plan: 'pro', perm: 'ayarlar' },
 ]
@@ -30,7 +30,7 @@ const ALL_PERMISSIONS = [
   { key: 'kiralama-takvimi', label: 'Kiralama Takvimi' },
   { key: 'araclarim', label: 'Araçlarım' },
   { key: 'mini-muhasebe', label: 'Mini Muhasebe' },
-  { key: 'raporlar', label: 'Raporlar' },
+  { key: 'destek', label: 'Destek' },
   { key: 'bildirimler', label: 'Bildirimler' },
 ]
 
@@ -70,7 +70,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       if (!p) { router.push('/giris'); return }
       if (p.status === 'pending') { router.push('/onay-bekleniyor'); return }
-      if (p.status === 'rejected') { router.push('/giris'); return }
+      if (p.status === 'rejected' || p.status === 'blocked') { router.push('/giris'); return }
       setProfile(p)
       const { data: notifs } = await supabase.from('notifications').select('*')
         .or(`user_id.eq.${user.id},user_id.is.null`)
@@ -255,7 +255,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return false
   }
 
-  const maxSubUsers = profile?.subscription_plan === 'premium' ? 3 : 1
+  const maxSubUsers = profile?.subscription_plan === 'premium' ? 1 + (profile?.extra_personnel_slots || 0) : 0
 
   if (loading) return (
     <div className="flex items-center justify-center h-screen bg-[#0A0A0A]">
@@ -269,7 +269,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <aside className={`${sidebarOpen ? 'w-56' : 'w-0 overflow-hidden'} bg-[#141414] border-r border-[#2A2A2A] flex flex-col flex-shrink-0 transition-all duration-200`}>
         <div className="p-4 border-b border-[#2A2A2A]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center font-bold text-white text-sm flex-shrink-0">B</div>
+            <img src="/logo.png" alt="BilgiOrtağım" className="w-8 h-8 object-contain flex-shrink-0" />
             <div>
               <div className="text-white font-bold text-sm leading-none">BilgiOrtağım</div>
               <div className="text-gray-500 text-[10px]">Rent A Car</div>
@@ -396,16 +396,26 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             {showUserMenu && (
               <div className="absolute right-0 top-12 w-56 bg-[#141414] border border-[#2A2A2A] rounded-xl shadow-2xl z-50 overflow-hidden">
                 <div className="px-4 py-3 border-b border-[#2A2A2A]">
-                  <div className="text-white text-sm font-medium">{profile?.company_name}</div>
+                  <div className="text-white text-sm font-medium">
+                    {profile?.is_branch ? (profile?.branch_name || profile?.full_name) : profile?.is_sub_user ? profile?.full_name : profile?.company_name}
+                  </div>
                   <div className="text-gray-500 text-xs">{profile?.email}</div>
-                  <div className="text-gray-600 text-[10px] mt-1 capitalize">{profile?.subscription_plan === 'none' ? 'Ücretsiz Plan' : `${profile?.subscription_plan} Plan`}</div>
+                  {profile?.is_branch ? (
+                    <div className="text-blue-400 text-[10px] mt-1 flex items-center gap-1"><Building2 size={9} /> {profile?.company_name} Şubesi</div>
+                  ) : profile?.is_sub_user ? (
+                    <div className="text-purple-400 text-[10px] mt-1 flex items-center gap-1"><Users size={9} /> {profile?.company_name} Personeli</div>
+                  ) : (
+                    <div className="text-gray-600 text-[10px] mt-1 capitalize">{profile?.subscription_plan === 'none' ? 'Ücretsiz Plan' : `${profile?.subscription_plan} Plan`}</div>
+                  )}
                 </div>
                 <div className="p-2">
-                  <Link href="/ayarlar" onClick={() => setShowUserMenu(false)}
-                    className="flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-white hover:bg-[#1E1E1E] rounded-lg text-sm transition-colors">
-                    <Settings size={15} /> Ayarlar
-                  </Link>
-                  {!profile?.is_sub_user && (
+                  {!profile?.is_sub_user && !profile?.is_branch && (
+                    <Link href="/ayarlar" onClick={() => setShowUserMenu(false)}
+                      className="flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-white hover:bg-[#1E1E1E] rounded-lg text-sm transition-colors">
+                      <Settings size={15} /> Ayarlar
+                    </Link>
+                  )}
+                  {!profile?.is_sub_user && !profile?.is_branch && maxSubUsers > 0 && (
                     <button onClick={openStaffModal}
                       className="flex items-center gap-3 w-full px-3 py-2.5 text-gray-400 hover:text-white hover:bg-[#1E1E1E] rounded-lg text-sm transition-colors">
                       <Users size={15} />

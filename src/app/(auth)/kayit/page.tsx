@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { DatePicker } from '@/components/ui/date-picker'
 import { Upload, Shield, Eye, EyeOff, FileText, Check, X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { KVKK_TEXT, CONTRACT_TEXT } from '@/lib/legal/texts'
 
@@ -211,7 +212,9 @@ export default function KayitPage() {
                 </div>
                 <div>
                   <label className={labelCls}>Doğum Tarihi *</label>
-                  <input type="date" value={form.birth_date} onChange={e => setForm(f => ({ ...f, birth_date: e.target.value }))} className={inputCls} />
+                  <DatePicker value={form.birth_date} onChange={d => setForm(f => ({ ...f, birth_date: d }))}
+                    maxDate={new Date(new Date().setFullYear(new Date().getFullYear() - 18)).toISOString().slice(0, 10)}
+                    className={inputCls + ' flex items-center justify-between gap-2 hover:border-[#3A3A3A] transition-colors'} />
                 </div>
               </div>
               <div>

@@ -12,6 +12,14 @@ export async function POST(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } }
     )
 
+    // Şube hesapları kendi personelini ekleyemez
+    const { data: parentCheck } = await supabaseAdmin
+      .from('profiles').select('is_branch').eq('id', parent_user_id).single()
+
+    if (parentCheck?.is_branch) {
+      return NextResponse.json({ error: 'Şube hesapları personel ekleyemez.' }, { status: 403 })
+    }
+
     // Geçici şifre oluştur
     const tempPassword = Math.random().toString(36).slice(-8) + Math.random().toString(36).slice(-4).toUpperCase() + '!1'
 

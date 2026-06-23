@@ -23,7 +23,7 @@ export default function KarAnaliziPage() {
       return { date: d, start: format(startOfMonth(d), 'yyyy-MM-dd'), end: format(endOfMonth(d), 'yyyy-MM-dd'), label: format(d, 'MMM yy', { locale: tr }) }
     })
 
-    const { data: txData } = await supabase.from('transactions').select('*').eq('user_id', user.id)
+    const { data: txData } = await supabase.from('transactions').select('*')
       .gte('transaction_date', months[0].start).lte('transaction_date', months[11].end)
 
     const rows = months.map(m => {

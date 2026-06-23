@@ -35,7 +35,7 @@ export default function AdminDashboard() {
       supabase.from('query_logs').select('*', { count: 'exact', head: true }).gte('queried_at', monthStart).lte('queried_at', monthEnd),
       supabase.from('subscriptions').select('price').gte('created_at', monthStart).lte('created_at', monthEnd).eq('payment_status', 'completed'),
       supabase.from('profiles').select('id, full_name, company_name, status, subscription_plan, created_at').eq('role', 'user').order('created_at', { ascending: false }).limit(5),
-      supabase.from('query_logs').select('*, profiles(company_name)').order('queried_at', { ascending: false }).limit(8),
+      supabase.from('query_logs').select('*, profiles!query_logs_user_id_fkey(company_name)').order('queried_at', { ascending: false }).limit(8),
     ])
 
     const revenueMonth = (revenueRes.data || []).reduce((s: number, r: any) => s + Number(r.price), 0)

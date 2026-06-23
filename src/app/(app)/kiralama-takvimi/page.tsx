@@ -7,6 +7,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, differe
 import { tr } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight, Plus, X, Upload, Eye, Car, Clock, TrendingUp, AlertCircle, List, Calendar, Search, Download, Edit2, Trash2, CalendarDays, AlertTriangle } from 'lucide-react'
 import { hashTC } from '@/lib/crypto'
+import { DatePicker } from '@/components/ui/date-picker'
 
 const VEHICLE_COLORS = ['#E02424','#3B82F6','#22C55E','#F59E0B','#A855F7','#EC4899','#14B8A6','#F97316','#6366F1','#84CC16']
 
@@ -18,65 +19,6 @@ function maskPhone(phone: string) {
   if (!phone) return '***'
   const clean = phone.replace(/\D/g, '')
   return clean.length >= 10 ? clean.slice(0, 3) + ' *** ** ' + clean.slice(-2) : '***'
-}
-
-// Date picker bileşeni
-function DatePicker({ value, onChange, label, min }: { value: string, onChange: (v: string) => void, label: string, min?: string }) {
-  const [open, setOpen] = useState(false)
-  const [viewMonth, setViewMonth] = useState(() => value ? new Date(value) : new Date())
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    if (open) document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  const days = eachDayOfInterval({ start: startOfMonth(viewMonth), end: endOfMonth(viewMonth) })
-  const firstDay = (startOfMonth(viewMonth).getDay() + 6) % 7
-
-  return (
-    <div className="relative" ref={ref}>
-      <label className="text-gray-400 text-sm mb-1.5 block">{label}</label>
-      <button type="button" onClick={() => setOpen(!open)}
-        className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-left rounded-lg px-3 py-2.5 text-sm flex items-center justify-between hover:border-red-500/50 outline-none focus:border-red-500 transition-colors">
-        <span className={value ? 'text-white' : 'text-gray-600'}>{value ? format(new Date(value), 'dd MMMM yyyy', { locale: tr }) : 'Tarih seçin'}</span>
-        <CalendarDays size={14} className="text-gray-500" />
-      </button>
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-[100] bg-[#1A1A1A] border border-[#2A2A2A] rounded-xl p-3 shadow-2xl w-72">
-          <div className="flex items-center justify-between mb-3">
-            <button type="button" onClick={() => setViewMonth(subMonths(viewMonth, 1))} className="p-1 hover:bg-[#2A2A2A] rounded text-gray-400"><ChevronLeft size={14} /></button>
-            <span className="text-white text-sm font-medium">{format(viewMonth, 'MMMM yyyy', { locale: tr })}</span>
-            <button type="button" onClick={() => setViewMonth(addMonths(viewMonth, 1))} className="p-1 hover:bg-[#2A2A2A] rounded text-gray-400"><ChevronRight size={14} /></button>
-          </div>
-          <div className="grid grid-cols-7 mb-1">
-            {['Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct', 'Pz'].map(d => (
-              <div key={d} className="text-center text-[10px] text-gray-600 py-1">{d}</div>
-            ))}
-          </div>
-          <div className="grid grid-cols-7 gap-0.5">
-            {Array.from({ length: firstDay }).map((_, i) => <div key={i} />)}
-            {days.map(day => {
-              const dateStr = format(day, 'yyyy-MM-dd')
-              const isSelected = value === dateStr
-              const isToday = isSameDay(day, new Date())
-              const isDisabled = min ? dateStr < min : false
-              return (
-                <button key={dateStr} type="button" disabled={isDisabled}
-                  onClick={() => { onChange(dateStr); setOpen(false) }}
-                  className={`text-center text-xs py-1.5 rounded-lg transition-colors ${isDisabled ? 'text-gray-700 cursor-not-allowed' : isSelected ? 'bg-red-600 text-white font-bold' : isToday ? 'text-red-400 font-bold hover:bg-[#2A2A2A]' : 'text-gray-300 hover:bg-[#2A2A2A]'}`}>
-                  {format(day, 'd')}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 export default function KiralamaTakvimiPage() {
@@ -133,8 +75,8 @@ export default function KiralamaTakvimiPage() {
 
     const [profileRes, allRentalsRes, vehiclesRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', user.id).single(),
-      supabase.from('rentals').select('*, vehicles(plate, brand, model, color)').eq('user_id', user.id).order('created_at', { ascending: false }),
-      supabase.from('vehicles').select('*').eq('user_id', user.id),
+      supabase.from('rentals').select('*, vehicles(plate, brand, model, color), performed_by_profile:profiles!rentals_performed_by_fkey(full_name)').order('created_at', { ascending: false }),
+      supabase.from('vehicles').select('*'),
     ])
 
     const allRentalsData = allRentalsRes.data || []
@@ -239,7 +181,7 @@ export default function KiralamaTakvimiPage() {
       // customer_records'ta bu TC var mı kontrol et
       const { data: existingCustomer } = await supabase
         .from('customer_records')
-        .select('id, total_records, last_company_name')
+        .select('id, rental_count, last_rental_company')
         .eq('tc_hash', tc_hash)
         .maybeSingle()
 
@@ -247,11 +189,11 @@ export default function KiralamaTakvimiPage() {
       const vehiclePlate = vehicleInfo?.plate || ''
 
       if (existingCustomer) {
-        // Mevcut müşteri: total_records artır, last bilgileri güncelle
+        // Mevcut müşteri: rental_count artır, last bilgileri güncelle
         await supabase.from('customer_records').update({
-          total_records: (existingCustomer.total_records || 0) + 1,
-          last_rental_at: new Date().toISOString(),
-          last_company_name: profile?.company_name || '',
+          rental_count: (existingCustomer.rental_count || 0) + 1,
+          last_rental_date: form.start_date,
+          last_rental_company: profile?.company_name || '',
           updated_at: new Date().toISOString(),
         }).eq('id', existingCustomer.id)
 
@@ -271,14 +213,14 @@ export default function KiralamaTakvimiPage() {
         // Yeni müşteri: customer_records'a ekle
         const { data: newCustomer } = await supabase.from('customer_records').insert({
           tc_hash,
+          tc_encrypted: form.customer_tc,
           full_name: form.customer_name,
           phone_encrypted: form.customer_phone || '',
-          risk_status: 'safe',
-          total_records: 1,
-          negative_records: 0,
-          total_debt: 0,
-          last_rental_at: new Date().toISOString(),
-          last_company_name: profile?.company_name || '',
+          risk_level: 'clear',
+          rental_count: 1,
+          total_outstanding: 0,
+          last_rental_date: form.start_date,
+          last_rental_company: profile?.company_name || '',
         }).select('id').single()
 
         // customer_record_items'a kiralama kaydı ekle
@@ -742,7 +684,7 @@ export default function KiralamaTakvimiPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <DatePicker label="Başlangıç Tarihi *" value={form.start_date} onChange={v => setForm(f => ({ ...f, start_date: v, vehicle_id: '' }))} />
-                <DatePicker label="Bitiş Tarihi *" value={form.end_date} onChange={v => setForm(f => ({ ...f, end_date: v, vehicle_id: '' }))} min={form.start_date} />
+                <DatePicker label="Bitiş Tarihi *" value={form.end_date} onChange={v => setForm(f => ({ ...f, end_date: v, vehicle_id: '' }))} minDate={form.start_date} />
               </div>
               <div>
                 <label className="text-gray-400 text-sm mb-1.5 block">
@@ -852,6 +794,7 @@ export default function KiralamaTakvimiPage() {
                   { label: 'Depozito', value: `₺${Number(selectedRental.deposit || 0).toLocaleString('tr-TR')}` },
                   { label: 'Süre', value: `${differenceInDays(new Date(selectedRental.end_date), new Date(selectedRental.start_date))} gün` },
                   { label: 'Ödeme Yöntemi', value: selectedRental.payment_method || '—' },
+                  ...(selectedRental.performed_by_profile?.full_name ? [{ label: 'Kiralayan Personel', value: selectedRental.performed_by_profile.full_name }] : []),
                 ].map((item, i) => (
                   <div key={i} className="bg-[#1E1E1E] rounded-lg p-3">
                     <div className="text-gray-500 text-xs mb-1">{item.label}</div>
@@ -951,7 +894,7 @@ export default function KiralamaTakvimiPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <DatePicker label="Başlangıç Tarihi" value={editForm.start_date || ''} onChange={v => setEditForm((f: any) => ({ ...f, start_date: v }))} />
-                <DatePicker label="Bitiş Tarihi" value={editForm.end_date || ''} onChange={v => setEditForm((f: any) => ({ ...f, end_date: v }))} min={editForm.start_date} />
+                <DatePicker label="Bitiş Tarihi" value={editForm.end_date || ''} onChange={v => setEditForm((f: any) => ({ ...f, end_date: v }))} minDate={editForm.start_date} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="text-gray-400 text-sm mb-1.5 block">Günlük Fiyat (₺)</label>
@@ -993,7 +936,7 @@ export default function KiralamaTakvimiPage() {
               <div className="text-gray-500 text-xs mb-1">Mevcut Bitiş Tarihi</div>
               <div className="text-white font-medium">{format(new Date(selectedRental.end_date), 'dd MMMM yyyy', { locale: tr })}</div>
             </div>
-            <DatePicker label="Yeni Bitiş Tarihi *" value={extendDate} onChange={setExtendDate} min={selectedRental.end_date} />
+            <DatePicker label="Yeni Bitiş Tarihi *" value={extendDate} onChange={setExtendDate} minDate={selectedRental.end_date} />
             {extendDate && extendDate > selectedRental.end_date && (
               <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 mt-3">
                 <div className="text-purple-400 text-xs">+{differenceInDays(new Date(extendDate), new Date(selectedRental.end_date))} gün uzatılıyor</div>

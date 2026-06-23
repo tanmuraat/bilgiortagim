@@ -5,11 +5,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { format, subDays, startOfMonth, endOfMonth, subMonths } from 'date-fns'
 import { tr } from 'date-fns/locale'
+import { DatePicker } from '@/components/ui/date-picker'
 import {
   TrendingUp, TrendingDown, DollarSign, AlertCircle, Clock,
   Plus, X, Upload, Eye, Download, Filter, BarChart3,
   Car, ChevronLeft, ChevronRight, FileText, Search,
-  Pencil, Trash2, Check, ChevronDown, ChevronUp
+  Pencil, Trash2, Check, ChevronDown, ChevronUp, Building2, Mail, Phone, Loader2, User2
 } from 'lucide-react'
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -27,7 +28,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   arac_kiralama: 'Araç Kiralama', depozito: 'Depozito', hasar_tahsilat: 'Hasar Tahsilat', diger_gelir: 'Diğer Gelir',
 }
 
-type Tab = 'ozet' | 'islemler' | 'evrak' | 'raporlar'
+type Tab = 'ozet' | 'islemler' | 'evrak' | 'raporlar' | 'subeler'
 
 const inputCls = "w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2.5 text-sm focus:border-red-500 outline-none"
 
@@ -41,6 +42,23 @@ export default function MuhasebePage() {
   const [stats, setStats] = useState({ income: 0, expense: 0, profit: 0, margin: 0, pending: 0 })
   const [loading, setLoading] = useState(true)
   const [vehicles, setVehicles] = useState<any[]>([])
+  const [profile, setProfile] = useState<any>(null)
+
+  // Şubelerim
+  const [branches, setBranches] = useState<any[]>([])
+  const [branchesLoading, setBranchesLoading] = useState(false)
+  const [showAddBranchModal, setShowAddBranchModal] = useState(false)
+  const [branchForm, setBranchForm] = useState({ branch_name: '', email: '', phone: '' })
+  const [creatingBranch, setCreatingBranch] = useState(false)
+  const [branchError, setBranchError] = useState('')
+  const [branchSuccess, setBranchSuccess] = useState('')
+  const [selectedBranch, setSelectedBranch] = useState<any>(null)
+  const [branchDetail, setBranchDetail] = useState<{ vehicles: any[]; rentals: any[]; transactions: any[]; allTransactions: any[] } | null>(null)
+  const [branchDetailLoading, setBranchDetailLoading] = useState(false)
+  const [branchDetailTab, setBranchDetailTab] = useState<'ozet' | 'raporlar' | 'evrak' | 'ayarlar'>('ozet')
+  const [resettingBranchPw, setResettingBranchPw] = useState(false)
+  const [newBranchPassword, setNewBranchPassword] = useState('')
+  const [deletingBranchId, setDeletingBranchId] = useState<string | null>(null)
 
   // Add modal
   const [showAddModal, setShowAddModal] = useState(false)
@@ -63,6 +81,8 @@ export default function MuhasebePage() {
   const [txSearch, setTxSearch] = useState('')
   const [txTypeFilter, setTxTypeFilter] = useState<'all' | 'income' | 'expense'>('all')
   const [txCatFilter, setTxCatFilter] = useState('all')
+  const [txDateFrom, setTxDateFrom] = useState('')
+  const [txDateTo, setTxDateTo] = useState('')
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // Raporlar
@@ -78,11 +98,14 @@ export default function MuhasebePage() {
     const monthStart = format(startOfMonth(now), 'yyyy-MM-dd')
     const monthEnd = format(endOfMonth(now), 'yyyy-MM-dd')
 
-    const [txRes, rentalsRes, vehiclesRes] = await Promise.all([
-      supabase.from('transactions').select('*').eq('user_id', user.id).order('transaction_date', { ascending: false }),
-      supabase.from('rentals').select('*, vehicles(plate, brand, model)').eq('user_id', user.id).in('payment_status', ['pending', 'partial']).order('end_date', { ascending: true }),
-      supabase.from('vehicles').select('id, plate, brand, model').eq('user_id', user.id),
+    const [txRes, rentalsRes, vehiclesRes, profileRes] = await Promise.all([
+      supabase.from('transactions').select('*, performed_by_profile:profiles!transactions_performed_by_fkey(full_name)').order('transaction_date', { ascending: false }),
+      supabase.from('rentals').select('*, vehicles(plate, brand, model), performed_by_profile:profiles!rentals_performed_by_fkey(full_name)').in('payment_status', ['pending', 'partial']).order('end_date', { ascending: true }),
+      supabase.from('vehicles').select('id, plate, brand, model'),
+      supabase.from('profiles').select('is_branch, branch_of_user_id, subscription_plan, company_name, extra_branch_slots').eq('id', user.id).single(),
     ])
+
+    setProfile(profileRes.data || null)
 
     const txData = txRes.data || []
     const overdueData = (rentalsRes.data || []).filter(r => (Number(r.total_price || 0) - Number(r.paid_amount || 0)) > 0)
@@ -125,9 +148,9 @@ export default function MuhasebePage() {
       return { date: d, start: format(startOfMonth(d), 'yyyy-MM-dd'), end: format(endOfMonth(d), 'yyyy-MM-dd'), label: format(d, 'MMM yy', { locale: tr }) }
     })
     const [txRes, rentalsRes, vehiclesRes] = await Promise.all([
-      supabase.from('transactions').select('*').eq('user_id', user.id).gte('transaction_date', months[0].start),
-      supabase.from('rentals').select('*, vehicles(plate, brand, model)').eq('user_id', user.id),
-      supabase.from('vehicles').select('*').eq('user_id', user.id),
+      supabase.from('transactions').select('*').gte('transaction_date', months[0].start),
+      supabase.from('rentals').select('*, vehicles(plate, brand, model)'),
+      supabase.from('vehicles').select('*'),
     ])
     const txData = txRes.data || []
     const rentalsData = rentalsRes.data || []
@@ -151,6 +174,119 @@ export default function MuhasebePage() {
 
   useEffect(() => { fetchData() }, [fetchData])
   useEffect(() => { if (activeTab === 'raporlar') buildReportData() }, [activeTab, buildReportData])
+  useEffect(() => { if (activeTab === 'subeler' && profile && !profile.is_branch) fetchBranches() }, [activeTab, profile])
+
+  const fetchBranches = useCallback(async () => {
+    setBranchesLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase.from('profiles')
+      .select('id, branch_name, email, phone, created_at')
+      .eq('branch_of_user_id', user.id)
+      .order('created_at', { ascending: true })
+    setBranches(data || [])
+    setBranchesLoading(false)
+  }, [supabase])
+
+  const branchLimit = profile?.subscription_plan === 'premium' ? 2 + (profile?.extra_branch_slots || 0) : 0
+
+  const handleCreateBranch = async () => {
+    setBranchError('')
+    setBranchSuccess('')
+    if (!branchForm.branch_name.trim() || !branchForm.email.trim()) {
+      setBranchError('Şube adı ve e-posta zorunludur.')
+      return
+    }
+    setCreatingBranch(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setCreatingBranch(false); return }
+
+    try {
+      const res = await fetch('/api/sube', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...branchForm, parent_user_id: user.id }),
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        setBranchError(result.error || 'Şube oluşturulamadı.')
+        setCreatingBranch(false)
+        return
+      }
+      setBranchSuccess(result.message)
+      setBranchForm({ branch_name: '', email: '', phone: '' })
+      fetchBranches()
+    } catch (e: any) {
+      setBranchError('Bir hata oluştu: ' + e.message)
+    }
+    setCreatingBranch(false)
+  }
+
+  const handleDeleteBranch = async (branchId: string) => {
+    if (!confirm('Bu şubeyi kalıcı olarak silmek istediğinize emin misiniz? Şubenin tüm araç ve kiralama verileri de silinecek.')) return
+    setDeletingBranchId(branchId)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    try {
+      const res = await fetch('/api/sube', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch_id: branchId, parent_user_id: user.id }),
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        alert(result.error || 'Şube silinemedi.')
+        setDeletingBranchId(null)
+        return
+      }
+      setBranches(prev => prev.filter(b => b.id !== branchId))
+    } catch (e: any) {
+      alert('Bir hata oluştu: ' + e.message)
+    }
+    setDeletingBranchId(null)
+  }
+
+  const openBranchDetail = async (branch: any) => {
+    setSelectedBranch(branch)
+    setBranchDetailTab('ozet')
+    setNewBranchPassword('')
+    setBranchDetailLoading(true)
+    const [vRes, rRes, tRes, allTRes] = await Promise.all([
+      supabase.from('vehicles').select('*').eq('user_id', branch.id),
+      supabase.from('rentals').select('*, vehicles(plate, brand, model), performed_by_profile:profiles!rentals_performed_by_fkey(full_name)').eq('user_id', branch.id).order('start_date', { ascending: false }).limit(50),
+      supabase.from('transactions').select('*, performed_by_profile:profiles!transactions_performed_by_fkey(full_name)').eq('user_id', branch.id).order('transaction_date', { ascending: false }).limit(50),
+      supabase.from('transactions').select('*').eq('user_id', branch.id),
+    ])
+    setBranchDetail({ vehicles: vRes.data || [], rentals: rRes.data || [], transactions: tRes.data || [], allTransactions: allTRes.data || [] })
+    setBranchDetailLoading(false)
+  }
+
+  const handleResetBranchPassword = async () => {
+    if (!selectedBranch) return
+    if (!confirm(`${selectedBranch.branch_name} şubesinin şifresini sıfırlamak istediğinize emin misiniz? Şube bir dahaki girişte yeni şifreyi kullanmak zorunda kalacak.`)) return
+    setResettingBranchPw(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    try {
+      const res = await fetch('/api/sube', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch_id: selectedBranch.id, parent_user_id: user.id, action: 'reset_password' }),
+      })
+      const result = await res.json()
+      if (!res.ok) {
+        alert(result.error || 'Şifre sıfırlanamadı.')
+        setResettingBranchPw(false)
+        return
+      }
+      setNewBranchPassword(result.new_password)
+    } catch (e: any) {
+      alert('Bir hata oluştu: ' + e.message)
+    }
+    setResettingBranchPw(false)
+  }
 
   // Gelir/Gider ekleme
   const handleAdd = async () => {
@@ -242,12 +378,16 @@ export default function MuhasebePage() {
   const filteredTx = allTransactions.filter(t => {
     if (txTypeFilter !== 'all' && t.type !== txTypeFilter) return false
     if (txCatFilter !== 'all' && t.category !== txCatFilter) return false
+    if (txDateFrom && t.transaction_date < txDateFrom) return false
+    if (txDateTo && t.transaction_date > txDateTo) return false
     if (txSearch) {
       const q = txSearch.toLowerCase()
       return t.description?.toLowerCase().includes(q) || (CATEGORY_LABELS[t.category] || '').toLowerCase().includes(q)
     }
     return true
   })
+  const txDateFilterActive = !!(txDateFrom || txDateTo)
+  const clearTxDateFilter = () => { setTxDateFrom(''); setTxDateTo('') }
 
   const reportMonthStart = format(startOfMonth(reportMonth), 'yyyy-MM-dd')
   const reportMonthEnd = format(endOfMonth(reportMonth), 'yyyy-MM-dd')
@@ -280,12 +420,13 @@ export default function MuhasebePage() {
       </div>
 
       {/* Sekmeler */}
-      <div className="flex bg-[#1E1E1E] border border-[#2A2A2A] rounded-lg p-1 w-fit gap-1">
+      <div className="flex bg-[#1E1E1E] border border-[#2A2A2A] rounded-lg p-1 w-fit gap-1 flex-wrap">
         {([
           { key: 'ozet', label: 'Bu Ay Özeti', icon: DollarSign },
           { key: 'islemler', label: 'Tüm İşlemler', icon: Filter },
           { key: 'evrak', label: 'Evrak Arşivi', icon: FileText },
           { key: 'raporlar', label: 'Aylık Raporlar', icon: BarChart3 },
+          ...(profile && !profile.is_branch ? [{ key: 'subeler' as Tab, label: 'Şubelerim', icon: Building2 }] : []),
         ] as const).map(({ key, label, icon: Icon }) => (
           <button key={key} onClick={() => setActiveTab(key)}
             className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm transition-colors ${activeTab === key ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}>
@@ -489,6 +630,19 @@ export default function MuhasebePage() {
               <option value="all">Tüm Kategoriler</option>
               {Object.entries(CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
+            <div className="flex items-center gap-1.5">
+              <DatePicker value={txDateFrom} onChange={setTxDateFrom} placeholder="Başlangıç"
+                className="w-[140px] bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-2.5 py-2 text-xs focus:border-red-500 outline-none flex items-center justify-between gap-1.5 hover:border-[#3A3A3A] transition-colors" />
+              <span className="text-gray-600 text-xs">–</span>
+              <DatePicker value={txDateTo} onChange={setTxDateTo} placeholder="Bitiş" minDate={txDateFrom || undefined}
+                className="w-[140px] bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-2.5 py-2 text-xs focus:border-red-500 outline-none flex items-center justify-between gap-1.5 hover:border-[#3A3A3A] transition-colors" />
+              {txDateFilterActive && (
+                <button onClick={clearTxDateFilter} title="Tarih filtresini temizle"
+                  className="text-gray-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-400/10 transition-colors">
+                  <X size={13} />
+                </button>
+              )}
+            </div>
             <span className="text-gray-500 text-sm ml-auto">{filteredTx.length} kayıt</span>
           </div>
 
@@ -508,7 +662,14 @@ export default function MuhasebePage() {
                   <div className={`w-2 h-2 rounded-full flex-shrink-0 ${t.type === 'income' ? 'bg-green-400' : 'bg-red-400'}`} />
                   <div className="flex-1 min-w-0">
                     <div className="text-white text-sm font-medium truncate">{t.description}</div>
-                    <div className="text-gray-500 text-xs">{format(new Date(t.transaction_date), 'dd MMM yyyy', { locale: tr })} · {CATEGORY_LABELS[t.category] || t.category}</div>
+                    <div className="text-gray-500 text-xs flex items-center gap-1.5">
+                      <span>{format(new Date(t.transaction_date), 'dd MMM yyyy', { locale: tr })} · {CATEGORY_LABELS[t.category] || t.category}</span>
+                      {t.performed_by_profile?.full_name && (
+                        <span className="flex items-center gap-1 text-gray-600">
+                          <User2 size={10} /> {t.performed_by_profile.full_name}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Fiş/fatura göster */}
@@ -573,6 +734,19 @@ export default function MuhasebePage() {
               <option value="all">Tüm Kategoriler</option>
               {Object.entries(CATEGORY_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
             </select>
+            <div className="flex items-center gap-1.5">
+              <DatePicker value={txDateFrom} onChange={setTxDateFrom} placeholder="Başlangıç"
+                className="w-[140px] bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-2.5 py-2 text-xs focus:border-red-500 outline-none flex items-center justify-between gap-1.5 hover:border-[#3A3A3A] transition-colors" />
+              <span className="text-gray-600 text-xs">–</span>
+              <DatePicker value={txDateTo} onChange={setTxDateTo} placeholder="Bitiş" minDate={txDateFrom || undefined}
+                className="w-[140px] bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-2.5 py-2 text-xs focus:border-red-500 outline-none flex items-center justify-between gap-1.5 hover:border-[#3A3A3A] transition-colors" />
+              {txDateFilterActive && (
+                <button onClick={clearTxDateFilter} title="Tarih filtresini temizle"
+                  className="text-gray-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-400/10 transition-colors">
+                  <X size={13} />
+                </button>
+              )}
+            </div>
             <span className="text-gray-500 text-sm ml-auto">
               {filteredTx.filter(t => t.receipt_url).length} belge
             </span>
@@ -760,7 +934,73 @@ export default function MuhasebePage() {
         </>
       )}
 
-      {/* ===== EKLE MODALİ ===== */}
+      {/* ===== ŞUBELERİM SEKMESİ ===== */}
+      {activeTab === 'subeler' && (
+        <>
+          {branchLimit === 0 ? (
+            <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-12 text-center">
+              <Building2 size={36} className="text-gray-600 mx-auto mb-3" />
+              <div className="text-white font-semibold">Şube özelliği Premium plana özeldir</div>
+              <div className="text-gray-500 text-sm mt-1 max-w-md mx-auto">
+                Şube açıp her şubenin araç, kiralama ve muhasebe verisini buradan tek yerden takip edebilmek için Premium plana geçebilirsiniz.
+              </div>
+              <a href="/abonelik" className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium px-4 py-2.5 rounded-xl mt-4 transition-colors">
+                Premium'a Geç
+              </a>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h3 className="text-white font-semibold">Şubelerim</h3>
+                  <p className="text-gray-500 text-sm mt-0.5">{branches.length} / {branchLimit} şube kullanılıyor</p>
+                </div>
+                <button onClick={() => { setShowAddBranchModal(true); setBranchError(''); setBranchSuccess('') }}
+                  disabled={branches.length >= branchLimit}
+                  className="bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium px-4 py-2.5 rounded-xl flex items-center gap-2 transition-colors">
+                  <Plus size={16} /> Şube Ekle
+                </button>
+              </div>
+
+              {branchesLoading ? (
+                <div className="flex items-center justify-center py-16"><Loader2 size={24} className="text-red-500 animate-spin" /></div>
+              ) : branches.length === 0 ? (
+                <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl p-12 text-center">
+                  <Building2 size={36} className="text-gray-600 mx-auto mb-3" />
+                  <div className="text-white font-semibold">Henüz şubeniz yok</div>
+                  <div className="text-gray-500 text-sm mt-1">İlk şubenizi ekleyerek başlayın.</div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {branches.map(b => (
+                    <div key={b.id} className="bg-[#141414] border border-[#2A2A2A] hover:border-[#3A3A3A] rounded-xl p-4 transition-colors">
+                      <div className="flex items-start justify-between gap-3">
+                        <button onClick={() => openBranchDetail(b)} className="flex items-start gap-3 text-left flex-1 min-w-0">
+                          <div className="w-9 h-9 rounded-lg bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                            <Building2 size={16} className="text-blue-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-white text-sm font-medium truncate">{b.branch_name}</div>
+                            <div className="text-gray-500 text-xs flex items-center gap-1 mt-0.5 truncate"><Mail size={10} /> {b.email}</div>
+                            {b.phone && <div className="text-gray-500 text-xs flex items-center gap-1 mt-0.5"><Phone size={10} /> {b.phone}</div>}
+                          </div>
+                        </button>
+                        <button onClick={() => handleDeleteBranch(b.id)} disabled={deletingBranchId === b.id}
+                          className="text-gray-500 hover:text-red-400 hover:bg-red-400/10 p-1.5 rounded-lg transition-colors flex-shrink-0 disabled:opacity-50">
+                          {deletingBranchId === b.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                        </button>
+                      </div>
+                      <button onClick={() => openBranchDetail(b)} className="w-full text-center text-xs text-blue-400 hover:text-blue-300 mt-3 py-1.5 border-t border-[#1A1A1A] transition-colors">
+                        Verileri Görüntüle
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl w-full max-w-md">
@@ -786,7 +1026,7 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="text-gray-400 text-sm mb-1.5 block">Tarih *</label>
-                  <input type="date" value={form.transaction_date} onChange={e => setForm(f => ({ ...f, transaction_date: e.target.value }))} className={inputCls} />
+                  <DatePicker value={form.transaction_date} onChange={d => setForm(f => ({ ...f, transaction_date: d }))} />
                 </div>
               </div>
               <div>
@@ -848,7 +1088,7 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="text-gray-400 text-sm mb-1.5 block">Tarih *</label>
-                  <input type="date" value={editForm.transaction_date} onChange={e => setEditForm(f => ({ ...f, transaction_date: e.target.value }))} className={inputCls} />
+                  <DatePicker value={editForm.transaction_date} onChange={d => setEditForm(f => ({ ...f, transaction_date: d }))} />
                 </div>
               </div>
               <div>
@@ -885,6 +1125,245 @@ export default function MuhasebePage() {
               <button onClick={handleEdit} disabled={saving} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">
                 {saving ? 'Kaydediliyor...' : 'Güncelle'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== ŞUBE EKLE MODALİ ===== */}
+      {showAddBranchModal && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setShowAddBranchModal(false)}>
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-[#2A2A2A]">
+              <h2 className="text-white font-semibold">Yeni Şube Ekle</h2>
+              <button onClick={() => setShowAddBranchModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              {branchError && <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm rounded-lg p-3">{branchError}</div>}
+              {branchSuccess && <div className="bg-green-500/10 border border-green-500/20 text-green-400 text-sm rounded-lg p-3">{branchSuccess}</div>}
+              <div>
+                <label className="text-gray-400 text-sm mb-1.5 block">Şube Adı *</label>
+                <input value={branchForm.branch_name} onChange={e => setBranchForm(f => ({ ...f, branch_name: e.target.value }))}
+                  placeholder="Örn: Kadıköy Şubesi" className={inputCls} />
+              </div>
+              <div>
+                <label className="text-gray-400 text-sm mb-1.5 block">Şube E-posta *</label>
+                <input type="email" value={branchForm.email} onChange={e => setBranchForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="sube@firma.com" className={inputCls} />
+                <p className="text-gray-600 text-xs mt-1">Şube bu e-posta ile giriş yapacak, geçici şifre size gösterilecek.</p>
+              </div>
+              <div>
+                <label className="text-gray-400 text-sm mb-1.5 block">Telefon</label>
+                <input value={branchForm.phone} onChange={e => setBranchForm(f => ({ ...f, phone: e.target.value }))}
+                  placeholder="0555 555 55 55" className={inputCls} />
+              </div>
+            </div>
+            <div className="flex gap-3 p-5 border-t border-[#2A2A2A]">
+              <button onClick={() => setShowAddBranchModal(false)} className="flex-1 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 py-2.5 rounded-lg hover:bg-[#252525] transition-colors">İptal</button>
+              <button onClick={handleCreateBranch} disabled={creatingBranch} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">
+                {creatingBranch ? 'Oluşturuluyor...' : 'Şube Oluştur'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== ŞUBE DETAY MODALİ ===== */}
+      {selectedBranch && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => { setSelectedBranch(null); setBranchDetail(null) }}>
+          <div className="bg-[#141414] border border-[#2A2A2A] rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-[#2A2A2A] flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-lg bg-blue-500/10 flex items-center justify-center"><Building2 size={16} className="text-blue-400" /></div>
+                <div>
+                  <h2 className="text-white font-semibold">{selectedBranch.branch_name}</h2>
+                  <p className="text-gray-500 text-xs">{selectedBranch.email}</p>
+                </div>
+              </div>
+              <button onClick={() => { setSelectedBranch(null); setBranchDetail(null) }} className="text-gray-400 hover:text-white"><X size={20} /></button>
+            </div>
+
+            <div className="flex border-b border-[#2A2A2A] px-5 flex-shrink-0 overflow-x-auto">
+              {([
+                { key: 'ozet', label: 'Özet' },
+                { key: 'raporlar', label: 'Aylık Raporlar' },
+                { key: 'evrak', label: 'Evrak Arşivi' },
+                { key: 'ayarlar', label: 'Ayarlar' },
+              ] as const).map(t => (
+                <button key={t.key} onClick={() => setBranchDetailTab(t.key)}
+                  className={`px-3.5 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${branchDetailTab === t.key ? 'border-red-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="overflow-y-auto p-5 space-y-5 flex-1">
+              {branchDetailLoading ? (
+                <div className="flex items-center justify-center py-16"><Loader2 size={24} className="text-red-500 animate-spin" /></div>
+              ) : branchDetail && branchDetailTab === 'ozet' && (
+                <>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-[#1E1E1E] rounded-lg p-3">
+                      <div className="text-gray-500 text-xs">Araç Sayısı</div>
+                      <div className="text-white font-bold text-lg mt-1">{branchDetail.vehicles.length}</div>
+                    </div>
+                    <div className="bg-[#1E1E1E] rounded-lg p-3">
+                      <div className="text-gray-500 text-xs">Toplam Gelir</div>
+                      <div className="text-green-400 font-bold text-lg mt-1">
+                        ₺{branchDetail.transactions.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0).toLocaleString('tr-TR')}
+                      </div>
+                    </div>
+                    <div className="bg-[#1E1E1E] rounded-lg p-3">
+                      <div className="text-gray-500 text-xs">Toplam Gider</div>
+                      <div className="text-red-400 font-bold text-lg mt-1">
+                        ₺{branchDetail.transactions.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0).toLocaleString('tr-TR')}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-white text-sm font-semibold mb-2">Son Kiralamalar</h3>
+                    <div className="bg-[#1E1E1E] rounded-lg overflow-hidden">
+                      {branchDetail.rentals.length === 0 ? (
+                        <div className="text-center text-gray-500 text-sm py-6">Henüz kiralama yok</div>
+                      ) : branchDetail.rentals.slice(0, 8).map(r => (
+                        <div key={r.id} className="flex items-center justify-between px-3 py-2.5 border-b border-[#2A2A2A] last:border-0 text-sm">
+                          <div className="min-w-0">
+                            <div className="text-white truncate">{r.customer_name}</div>
+                            <div className="text-gray-500 text-xs flex items-center gap-1.5">
+                              <span>{r.vehicles?.plate} · {format(new Date(r.start_date), 'd MMM', { locale: tr })} – {format(new Date(r.end_date), 'd MMM yyyy', { locale: tr })}</span>
+                              {r.performed_by_profile?.full_name && (
+                                <span className="flex items-center gap-1 text-gray-600"><User2 size={10} /> {r.performed_by_profile.full_name}</span>
+                              )}
+                            </div>
+                          </div>
+                          <span className="text-green-400 font-medium flex-shrink-0">₺{Number(r.total_price || 0).toLocaleString('tr-TR')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-white text-sm font-semibold mb-2">Son İşlemler</h3>
+                    <div className="bg-[#1E1E1E] rounded-lg overflow-hidden">
+                      {branchDetail.transactions.length === 0 ? (
+                        <div className="text-center text-gray-500 text-sm py-6">Henüz işlem yok</div>
+                      ) : branchDetail.transactions.slice(0, 8).map(t => (
+                        <div key={t.id} className="flex items-center justify-between px-3 py-2.5 border-b border-[#2A2A2A] last:border-0 text-sm">
+                          <div className="min-w-0">
+                            <div className="text-white truncate">{t.description}</div>
+                            <div className="text-gray-500 text-xs flex items-center gap-1.5">
+                              <span>{CATEGORY_LABELS[t.category] || t.category} · {format(new Date(t.transaction_date), 'd MMM yyyy', { locale: tr })}</span>
+                              {t.performed_by_profile?.full_name && (
+                                <span className="flex items-center gap-1 text-gray-600"><User2 size={10} /> {t.performed_by_profile.full_name}</span>
+                              )}
+                            </div>
+                          </div>
+                          <span className={`font-medium flex-shrink-0 ${t.type === 'income' ? 'text-green-400' : 'text-red-400'}`}>
+                            {t.type === 'income' ? '+' : '-'}₺{Number(t.amount).toLocaleString('tr-TR')}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* AYLIK RAPORLAR SEKMESİ */}
+              {!branchDetailLoading && branchDetail && branchDetailTab === 'raporlar' && (() => {
+                const months = Array.from({ length: 12 }, (_, i) => {
+                  const d = subMonths(new Date(), 11 - i)
+                  return { label: format(d, 'MMM yyyy', { locale: tr }), start: format(startOfMonth(d), 'yyyy-MM-dd'), end: format(endOfMonth(d), 'yyyy-MM-dd') }
+                })
+                const rows = months.map(m => {
+                  const monthTx = branchDetail.allTransactions.filter(t => t.transaction_date >= m.start && t.transaction_date <= m.end)
+                  const income = monthTx.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0)
+                  const expense = monthTx.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0)
+                  return { ...m, income, expense, profit: income - expense }
+                })
+                return (
+                  <div className="bg-[#1E1E1E] rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-[#2A2A2A] text-gray-500 text-xs">
+                          <th className="text-left px-3 py-2.5">Ay</th>
+                          <th className="text-right px-3 py-2.5">Gelir</th>
+                          <th className="text-right px-3 py-2.5">Gider</th>
+                          <th className="text-right px-3 py-2.5">Kâr/Zarar</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((r, i) => (
+                          <tr key={i} className="border-b border-[#2A2A2A] last:border-0">
+                            <td className="px-3 py-2.5 text-gray-300">{r.label}</td>
+                            <td className="px-3 py-2.5 text-right text-green-400">₺{r.income.toLocaleString('tr-TR')}</td>
+                            <td className="px-3 py-2.5 text-right text-red-400">₺{r.expense.toLocaleString('tr-TR')}</td>
+                            <td className={`px-3 py-2.5 text-right font-medium ${r.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>₺{r.profit.toLocaleString('tr-TR')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              })()}
+
+              {/* EVRAK ARŞİVİ SEKMESİ */}
+              {!branchDetailLoading && branchDetail && branchDetailTab === 'evrak' && (
+                <div className="bg-[#1E1E1E] rounded-lg overflow-hidden">
+                  {branchDetail.allTransactions.filter(t => t.receipt_url).length === 0 ? (
+                    <div className="text-center text-gray-500 text-sm py-12">Bu şubeye ait belge bulunmuyor</div>
+                  ) : branchDetail.allTransactions.filter(t => t.receipt_url).map(t => (
+                    <div key={t.id} className="flex items-center justify-between px-3 py-2.5 border-b border-[#2A2A2A] last:border-0 text-sm">
+                      <div className="min-w-0">
+                        <div className="text-white truncate">{t.description}</div>
+                        <div className="text-gray-500 text-xs">{CATEGORY_LABELS[t.category] || t.category} · {format(new Date(t.transaction_date), 'd MMM yyyy', { locale: tr })}</div>
+                      </div>
+                      <a href={toProxyUrl(t.receipt_url) || undefined} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 text-xs flex-shrink-0">
+                        <Eye size={13} /> Görüntüle
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* AYARLAR SEKMESİ */}
+              {!branchDetailLoading && branchDetail && branchDetailTab === 'ayarlar' && (
+                <div className="space-y-4">
+                  <div className="bg-[#1E1E1E] rounded-lg p-4">
+                    <div className="text-white text-sm font-medium mb-1">Şube Şifresini Sıfırla</div>
+                    <p className="text-gray-500 text-xs mb-3">
+                      Güvenlik nedeniyle mevcut şifre görüntülenemez. Şube şifresini unuttuysa, buradan yeni bir
+                      geçici şifre oluşturup şubeyle paylaşabilirsiniz.
+                    </p>
+                    {newBranchPassword ? (
+                      <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-green-400 text-xs">Yeni şifre oluşturuldu:</div>
+                          <div className="text-white font-mono text-sm mt-0.5">{newBranchPassword}</div>
+                        </div>
+                        <button onClick={() => { navigator.clipboard.writeText(newBranchPassword) }}
+                          className="text-xs text-green-400 hover:text-green-300 border border-green-500/30 px-2.5 py-1.5 rounded-lg flex-shrink-0">
+                          Kopyala
+                        </button>
+                      </div>
+                    ) : (
+                      <button onClick={handleResetBranchPassword} disabled={resettingBranchPw}
+                        className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-medium px-4 py-2.5 rounded-xl transition-colors">
+                        {resettingBranchPw ? 'Sıfırlanıyor...' : 'Şifreyi Sıfırla'}
+                      </button>
+                    )}
+                  </div>
+                  <div className="bg-[#1E1E1E] rounded-lg p-4">
+                    <div className="text-white text-sm font-medium mb-1">Şube Bilgileri</div>
+                    <div className="text-gray-500 text-xs space-y-1 mt-2">
+                      <div>E-posta: <span className="text-gray-300">{selectedBranch.email}</span></div>
+                      {selectedBranch.phone && <div>Telefon: <span className="text-gray-300">{selectedBranch.phone}</span></div>}
+                      <div>Oluşturulma: <span className="text-gray-300">{format(new Date(selectedBranch.created_at), 'd MMMM yyyy', { locale: tr })}</span></div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

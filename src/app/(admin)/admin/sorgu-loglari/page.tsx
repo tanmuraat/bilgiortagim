@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { format, subDays, startOfDay } from 'date-fns'
 import { tr } from 'date-fns/locale'
+import { DatePicker } from '@/components/ui/date-picker'
 import {
   Search, Shield, AlertTriangle, FileText, Download, Eye,
   Activity, Users, TrendingUp, Ban, RefreshCw, X, Image as ImageIcon,
@@ -49,7 +50,7 @@ export default function SorguLoglariPage() {
 
     const [queryRes, auditRes, rateLimitRes, profilesRes] = await Promise.all([
       supabase.from('query_logs')
-        .select('*, profiles(company_name, full_name, subscription_plan, status)')
+        .select('*, profiles!query_logs_user_id_fkey(company_name, full_name, subscription_plan, status)')
         .order('queried_at', { ascending: false })
         .limit(300),
       supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(500),
@@ -190,12 +191,12 @@ export default function SorguLoglariPage() {
             className="w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg pl-9 pr-3 py-2 text-sm focus:border-red-500 outline-none" />
         </div>
         <div className="flex items-center gap-2">
-          <Calendar size={13} className="text-gray-500" />
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            className="bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-2 py-2 text-xs focus:border-red-500 outline-none" />
+          <Calendar size={13} className="text-gray-500 flex-shrink-0" />
+          <DatePicker value={dateFrom} onChange={setDateFrom} placeholder="Başlangıç"
+            className="w-[130px] bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-2.5 py-2 text-xs focus:border-red-500 outline-none flex items-center justify-between gap-1.5 hover:border-[#3A3A3A] transition-colors" />
           <span className="text-gray-600 text-xs">—</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            className="bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-2 py-2 text-xs focus:border-red-500 outline-none" />
+          <DatePicker value={dateTo} onChange={setDateTo} placeholder="Bitiş" minDate={dateFrom || undefined}
+            className="w-[130px] bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-2.5 py-2 text-xs focus:border-red-500 outline-none flex items-center justify-between gap-1.5 hover:border-[#3A3A3A] transition-colors" />
         </div>
         {activeTab === 'dosya' && (
           <select value={actionFilter} onChange={e => setActionFilter(e.target.value)}

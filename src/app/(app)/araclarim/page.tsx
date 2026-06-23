@@ -67,6 +67,75 @@ function DatePickerInput({ value, onChange, label, placeholder }: {
   )
 }
 
+const inputCls = "w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2.5 text-sm focus:border-red-500 outline-none"
+
+// Form içindeki alan — component dışında tanımlı, böylece her keystroke'ta
+// yeniden oluşturulmuyor ve input focus'unu kaybetmiyor.
+function Field({ label, fkey, type = 'text', placeholder = '', form, setF }: {
+  label: string, fkey: string, type?: string, placeholder?: string, form: any, setF: (key: string, value: string) => void
+}) {
+  return (
+    <div>
+      <label className="text-gray-400 text-xs mb-1.5 block">{label}</label>
+      <input
+        type={type}
+        value={form[fkey]}
+        onChange={e => setF(fkey, e.target.value)}
+        placeholder={placeholder}
+        className={inputCls}
+      />
+    </div>
+  )
+}
+
+function VehicleFormFields({ form, setF }: { form: any, setF: (key: string, value: string) => void }) {
+  return (
+    <div className="p-5 space-y-4">
+      <div className="grid grid-cols-2 gap-4">
+        <Field label="Plaka *" fkey="plate" placeholder="34 ABC 123" form={form} setF={setF} />
+        <Field label="Marka *" fkey="brand" placeholder="Renault" form={form} setF={setF} />
+        <Field label="Model *" fkey="model" placeholder="Clio" form={form} setF={setF} />
+        <Field label="Yıl" fkey="year" type="number" placeholder="2021" form={form} setF={setF} />
+        <Field label="Renk" fkey="color" placeholder="Beyaz" form={form} setF={setF} />
+        <Field label="Güncel KM" fkey="current_km" type="number" placeholder="0" form={form} setF={setF} />
+        <div>
+          <label className="text-gray-400 text-xs mb-1.5 block">Yakıt Tipi</label>
+          <select value={form.fuel_type} onChange={e => setF('fuel_type', e.target.value)} className={inputCls}>
+            {['benzin', 'dizel', 'lpg', 'elektrik', 'hibrit'].map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-gray-400 text-xs mb-1.5 block">Vites</label>
+          <select value={form.transmission} onChange={e => setF('transmission', e.target.value)} className={inputCls}>
+            <option value="manuel">Manuel</option>
+            <option value="otomatik">Otomatik</option>
+          </select>
+        </div>
+      </div>
+      {/* Tarih alanları — DatePickerInput kullan */}
+      <div className="grid grid-cols-2 gap-4">
+        <DatePickerInput
+          label="Sigorta Bitiş"
+          value={form.insurance_expiry}
+          onChange={v => setF('insurance_expiry', v)}
+          placeholder="Tarih seçin"
+        />
+        <DatePickerInput
+          label="Muayene Bitiş"
+          value={form.inspection_expiry}
+          onChange={v => setF('inspection_expiry', v)}
+          placeholder="Tarih seçin"
+        />
+      </div>
+      <div>
+        <label className="text-gray-400 text-xs mb-1.5 block">Notlar</label>
+        <textarea value={form.notes} onChange={e => setF('notes', e.target.value)} rows={2}
+          className={inputCls + ' resize-none'} placeholder="Ek notlar..." />
+      </div>
+    </div>
+  )
+}
+
 export default function AraclarimPage() {
   const supabase = createClient()
   const [vehicles, setVehicles] = useState<any[]>([])
@@ -95,7 +164,7 @@ export default function AraclarimPage() {
     if (!user) return
     const [profileRes, vehiclesRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', user.id).single(),
-      supabase.from('vehicles').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
+      supabase.from('vehicles').select('*').order('created_at', { ascending: false }),
     ])
     setProfile(profileRes.data)
     const vData = vehiclesRes.data || []
@@ -209,68 +278,6 @@ export default function AraclarimPage() {
   const chartData = kmLogs
     .filter(l => l.vehicle_id === selectedVehicleForChart)
     .map(l => ({ tarih: format(new Date(l.logged_date), 'dd MMM', { locale: tr }), KM: l.km_value }))
-
-  const inputCls = "w-full bg-[#1E1E1E] border border-[#2A2A2A] text-white rounded-lg px-3 py-2.5 text-sm focus:border-red-500 outline-none"
-
-  // Form içindeki alan — sayfa atlamasını önlemek için onChange'de setState kullan
-  const Field = ({ label, fkey, type = 'text', placeholder = '' }: { label: string, fkey: string, type?: string, placeholder?: string }) => (
-    <div>
-      <label className="text-gray-400 text-xs mb-1.5 block">{label}</label>
-      <input
-        type={type}
-        value={(form as any)[fkey]}
-        onChange={e => setF(fkey, e.target.value)}
-        placeholder={placeholder}
-        className={inputCls}
-      />
-    </div>
-  )
-
-  const VehicleFormFields = () => (
-    <div className="p-5 space-y-4">
-      <div className="grid grid-cols-2 gap-4">
-        <Field label="Plaka *" fkey="plate" placeholder="34 ABC 123" />
-        <Field label="Marka *" fkey="brand" placeholder="Renault" />
-        <Field label="Model *" fkey="model" placeholder="Clio" />
-        <Field label="Yıl" fkey="year" type="number" placeholder="2021" />
-        <Field label="Renk" fkey="color" placeholder="Beyaz" />
-        <Field label="Güncel KM" fkey="current_km" type="number" placeholder="0" />
-        <div>
-          <label className="text-gray-400 text-xs mb-1.5 block">Yakıt Tipi</label>
-          <select value={form.fuel_type} onChange={e => setF('fuel_type', e.target.value)} className={inputCls}>
-            {['benzin', 'dizel', 'lpg', 'elektrik', 'hibrit'].map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="text-gray-400 text-xs mb-1.5 block">Vites</label>
-          <select value={form.transmission} onChange={e => setF('transmission', e.target.value)} className={inputCls}>
-            <option value="manuel">Manuel</option>
-            <option value="otomatik">Otomatik</option>
-          </select>
-        </div>
-      </div>
-      {/* Tarih alanları — DatePickerInput kullan */}
-      <div className="grid grid-cols-2 gap-4">
-        <DatePickerInput
-          label="Sigorta Bitiş"
-          value={form.insurance_expiry}
-          onChange={v => setF('insurance_expiry', v)}
-          placeholder="Tarih seçin"
-        />
-        <DatePickerInput
-          label="Muayene Bitiş"
-          value={form.inspection_expiry}
-          onChange={v => setF('inspection_expiry', v)}
-          placeholder="Tarih seçin"
-        />
-      </div>
-      <div>
-        <label className="text-gray-400 text-xs mb-1.5 block">Notlar</label>
-        <textarea value={form.notes} onChange={e => setF('notes', e.target.value)} rows={2}
-          className={inputCls + ' resize-none'} placeholder="Ek notlar..." />
-      </div>
-    </div>
-  )
 
   if (loading) return <div className="flex items-center justify-center h-96"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-500" /></div>
 
@@ -394,7 +401,7 @@ export default function AraclarimPage() {
               <h2 className="text-white font-semibold text-lg">Araç Ekle</h2>
               <button onClick={() => setShowAddModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
             </div>
-            <VehicleFormFields />
+            <VehicleFormFields form={form} setF={setF} />
             <div className="flex gap-3 p-5 border-t border-[#2A2A2A]">
               <button onClick={() => setShowAddModal(false)} className="flex-1 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 py-2.5 rounded-lg hover:bg-[#252525] transition-colors">İptal</button>
               <button onClick={handleAddVehicle} disabled={saving} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">
@@ -413,7 +420,7 @@ export default function AraclarimPage() {
               <h2 className="text-white font-semibold text-lg">Araç Düzenle — {selectedVehicle?.plate}</h2>
               <button onClick={() => setShowEditModal(false)} className="text-gray-400 hover:text-white"><X size={20} /></button>
             </div>
-            <VehicleFormFields />
+            <VehicleFormFields form={form} setF={setF} />
             <div className="flex gap-3 p-5 border-t border-[#2A2A2A]">
               <button onClick={() => setShowEditModal(false)} className="flex-1 bg-[#1E1E1E] border border-[#2A2A2A] text-gray-400 py-2.5 rounded-lg hover:bg-[#252525] transition-colors">İptal</button>
               <button onClick={handleEditVehicle} disabled={saving} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">
